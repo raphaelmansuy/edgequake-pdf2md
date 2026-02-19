@@ -64,10 +64,7 @@ pub async fn process_page(
     }
 
     // User message with the page image
-    messages.push(ChatMessage::user_with_images(
-        "",
-        vec![image_data],
-    ));
+    messages.push(ChatMessage::user_with_images("", vec![image_data]));
 
     let options = build_options(config);
 
@@ -88,10 +85,7 @@ pub async fn process_page(
                 let duration = start.elapsed();
                 debug!(
                     "Page {}: {} input tokens, {} output tokens, {:?}",
-                    page_num,
-                    response.prompt_tokens,
-                    response.completion_tokens,
-                    duration
+                    page_num, response.prompt_tokens, response.completion_tokens, duration
                 );
 
                 return PageResult {
@@ -106,7 +100,12 @@ pub async fn process_page(
             }
             Err(e) => {
                 let err_msg = format!("{}", e);
-                warn!("Page {}: attempt {} failed — {}", page_num, attempt + 1, err_msg);
+                warn!(
+                    "Page {}: attempt {} failed — {}",
+                    page_num,
+                    attempt + 1,
+                    err_msg
+                );
                 last_err = Some(err_msg);
             }
         }

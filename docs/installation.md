@@ -22,18 +22,15 @@ This downloads the correct binary from [bblanchon/pdfium-binaries](https://githu
 
 ### macOS
 
-**Option A — Setup script:**
+> **Note:** pdfium does not have an official Homebrew formula. Use the automated setup script or manual download instead.
+
+**Option A — Setup script (recommended):**
 ```bash
 ./scripts/setup-pdfium.sh
 export DYLD_LIBRARY_PATH="$(pwd)"
 ```
 
-**Option B — Homebrew:**
-```bash
-brew install pdfium-chromium
-```
-
-**Option C — Manual download:**
+**Option B — Manual download:**
 ```bash
 # Apple Silicon (M1/M2/M3/M4)
 curl -fSL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7690/pdfium-mac-arm64.tgz" -o /tmp/pdfium.tgz
@@ -45,6 +42,27 @@ tar -xzf /tmp/pdfium.tgz -C /tmp lib/libpdfium.dylib
 mv /tmp/lib/libpdfium.dylib .
 export DYLD_LIBRARY_PATH="$(pwd)"
 ```
+
+**Option C — Homebrew tap (community-maintained):**
+
+If you prefer installing via Homebrew, a community tap can be used to
+install the prebuilt PDFium binaries. This project maintains a minimal tap
+that fetches upstream prebuilt assets and installs the native library.
+
+```bash
+# Replace USER with the GitHub owner who published the tap
+brew tap USER/homebrew-pdfium-tap
+brew install USER/pdfium
+
+# Then set the library path if required
+export DYLD_LIBRARY_PATH="$(brew --prefix USER/pdfium)/lib:$DYLD_LIBRARY_PATH"
+```
+
+Notes:
+- This is a community-maintained tap; upstream binary assets change often.
+- Prefer pinning a specific upstream release or adding `sha256` to the
+	formula before using in production.
+
 
 ### Linux
 

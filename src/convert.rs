@@ -14,6 +14,7 @@ use crate::output::{ConversionOutput, ConversionStats, DocumentMetadata, PageRes
 use crate::pipeline::{encode, input, llm, postprocess, render};
 use edgequake_llm::{LLMProvider, ProviderFactory};
 use futures::stream::{self, StreamExt};
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -65,6 +66,12 @@ pub async fn convert(
         });
     }
     debug!("Selected {} pages for conversion", page_indices.len());
+
+    // Fire on_conversion_start now that we know how many pages will actually
+    // be converted (page_indices.len()), not the full document page count.
+    if let Some(ref cb) = config.progress_callback {
+        cb.on_conversion_start(page_indices.len());
+    }
 
     // ── Step 5: Rasterise pages ──────────────────────────────────────────
     let render_start = Instant::now();
@@ -154,10 +161,14 @@ pub async fn convert(
 
     info!(
         "Conversion complete: {}/{} pages, {}ms total",
-        processed,
-        total_pages,
-        stats.total_duration_ms
+        processed, total_pages, stats.total_duration_ms
     );
+
+    // Fire on_conversion_complete with the count of selected pages, not the
+    // full PDF page count, to match what on_conversion_start received.
+    if let Some(ref cb) = config.progress_callback {
+        cb.on_conversion_complete(page_indices.len(), processed);
+    }
 
     Ok(ConversionOutput {
         markdown,
@@ -227,6 +238,45 @@ pub async fn inspect(input_str: impl AsRef<str>) -> Result<DocumentMetadata, Pdf
     render::extract_metadata(&pdf_path, None).await
 }
 
+/// Convert PDF bytes in memory to Markdown.
+///
+/// This avoids the need for the caller to create a temporary file.
+/// Internally the library writes `bytes` to a managed [`tempfile`] and cleans
+/// it up automatically on return or panic.
+///
+/// This is the recommended API when PDF data comes from a database, network
+/// stream, or in-memory buffer rather than a file on disk.
+///
+/// # Arguments
+/// * `bytes`  — Raw PDF bytes
+/// * `config` — Conversion configuration
+///
+/// # Example
+/// ```rust,no_run
+/// use edgequake_pdf2md::{convert_from_bytes, ConversionConfig};
+///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let bytes: Vec<u8> = std::fs::read("document.pdf")?;
+/// let config = ConversionConfig::default();
+/// let output = convert_from_bytes(&bytes, &config).await?;
+/// println!("{}", output.markdown);
+/// # Ok(())
+/// # }
+/// ```
+pub async fn convert_from_bytes(
+    bytes: &[u8],
+    config: &ConversionConfig,
+) -> Result<ConversionOutput, Pdf2MdError> {
+    let mut tmp = tempfile::NamedTempFile::new()
+        .map_err(|e| Pdf2MdError::Internal(format!("tempfile: {e}")))?;
+    tmp.write_all(bytes)
+        .map_err(|e| Pdf2MdError::Internal(format!("tempfile write: {e}")))?;
+    let path = tmp.path().to_string_lossy().to_string();
+    // `tmp` is dropped (and the file deleted) when `convert` returns
+    convert(&path, config).await
+}
+
 // ── Internal helpers ─────────────────────────────────────────────────────
 
 /// Instantiate a named provider with the given model.
@@ -270,9 +320,7 @@ fn create_vision_provider(
 /// 4. **Full auto-detection** (`ProviderFactory::from_env`) — the factory
 ///    scans all known API key variables and picks the first available provider.
 ///    Convenient for `pdf2md document.pdf` with no other configuration.
-async fn resolve_provider(
-    config: &ConversionConfig,
-) -> Result<Arc<dyn LLMProvider>, Pdf2MdError> {
+async fn resolve_provider(config: &ConversionConfig) -> Result<Arc<dyn LLMProvider>, Pdf2MdError> {
     // 1) User-provided provider takes priority
     if let Some(ref provider) = config.provider {
         return Ok(Arc::clone(provider));
@@ -294,8 +342,8 @@ async fn resolve_provider(
         }
     }
 
-    let (llm_provider, _embedding) = ProviderFactory::from_env().map_err(|e| {
-        Pdf2MdError::ProviderNotConfigured {
+    let (llm_provider, _embedding) =
+        ProviderFactory::from_env().map_err(|e| Pdf2MdError::ProviderNotConfigured {
             provider: "auto".to_string(),
             hint: format!(
                 "No LLM provider could be auto-detected from environment.\n\
@@ -303,8 +351,7 @@ async fn resolve_provider(
                 Error: {}",
                 e
             ),
-        }
-    })?;
+        })?;
 
     Ok(llm_provider)
 }
@@ -315,13 +362,24 @@ async fn process_concurrent(
     pages: &[(usize, edgequake_llm::ImageData)],
     config: &ConversionConfig,
 ) -> Vec<PageResult> {
+    let total_pages = pages.len();
     stream::iter(pages.iter().map(|(idx, img_data)| {
         let provider = Arc::clone(provider);
         let page_num = idx + 1;
         let img = img_data.clone();
         let config_clone = config.clone();
         async move {
-            llm::process_page(&provider, page_num, img, None, &config_clone).await
+            if let Some(ref cb) = config_clone.progress_callback {
+                cb.on_page_start(page_num, total_pages);
+            }
+            let result = llm::process_page(&provider, page_num, img, None, &config_clone).await;
+            if let Some(ref cb) = config_clone.progress_callback {
+                match &result.error {
+                    None => cb.on_page_complete(page_num, total_pages, result.markdown.len()),
+                    Some(e) => cb.on_page_error(page_num, total_pages, &e.to_string()),
+                }
+            }
+            result
         }
     }))
     .buffer_unordered(config.concurrency)
@@ -338,9 +396,13 @@ async fn process_sequential(
 ) -> Vec<PageResult> {
     let mut results = Vec::with_capacity(pages.len());
     let mut prior_markdown: Option<String> = None;
+    let total_pages = pages.len();
 
     for (idx, img_data) in pages {
         let page_num = idx + 1;
+        if let Some(ref cb) = config.progress_callback {
+            cb.on_page_start(page_num, total_pages);
+        }
         let result = llm::process_page(
             provider,
             page_num,
@@ -349,6 +411,13 @@ async fn process_sequential(
             config,
         )
         .await;
+
+        if let Some(ref cb) = config.progress_callback {
+            match &result.error {
+                None => cb.on_page_complete(page_num, total_pages, result.markdown.len()),
+                Some(e) => cb.on_page_error(page_num, total_pages, &e.to_string()),
+            }
+        }
 
         if result.error.is_none() {
             prior_markdown = Some(result.markdown.clone());
@@ -374,8 +443,7 @@ fn assemble_document(
     }
 
     // Collect successful page markdowns
-    let successful_pages: Vec<&PageResult> =
-        pages.iter().filter(|p| p.error.is_none()).collect();
+    let successful_pages: Vec<&PageResult> = pages.iter().filter(|p| p.error.is_none()).collect();
 
     for (i, page) in successful_pages.iter().enumerate() {
         if i > 0 {

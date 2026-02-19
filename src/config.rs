@@ -11,6 +11,7 @@
 //! well-documented defaults for the rest.
 
 use crate::error::Pdf2MdError;
+use crate::progress::ConversionProgressCallback;
 use edgequake_llm::LLMProvider;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -140,6 +141,31 @@ pub struct ConversionConfig {
 
     /// Per-VLM-call timeout in seconds. Default: 60.
     pub api_timeout_secs: u64,
+
+    /// Optional progress callback invoked per-page during conversion.
+    ///
+    /// When set, the library calls [`ConversionProgressCallback`] methods at
+    /// the start of conversion, before and after each VLM call, and at the end.
+    ///
+    /// # Example
+    /// ```rust
+    /// use edgequake_pdf2md::{ConversionConfig, ConversionProgressCallback};
+    /// use std::sync::Arc;
+    ///
+    /// struct LogCallback;
+    /// impl ConversionProgressCallback for LogCallback {
+    ///     fn on_page_complete(&self, page: usize, total: usize, _len: usize) {
+    ///         eprintln!("Page {}/{} done", page, total);
+    ///     }
+    /// }
+    ///
+    /// let config = ConversionConfig::builder()
+    ///     .progress_callback(Arc::new(LogCallback) as Arc<dyn ConversionProgressCallback>)
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    /// This field is intentionally not serialisable; use the builder to set it at runtime.
+    pub progress_callback: Option<Arc<dyn ConversionProgressCallback>>,
 }
 
 impl Default for ConversionConfig {
@@ -164,6 +190,7 @@ impl Default for ConversionConfig {
             include_metadata: false,
             download_timeout_secs: 120,
             api_timeout_secs: 60,
+            progress_callback: None,
         }
     }
 }
@@ -176,7 +203,10 @@ impl fmt::Debug for ConversionConfig {
             .field("concurrency", &self.concurrency)
             .field("model", &self.model)
             .field("provider_name", &self.provider_name)
-            .field("provider", &self.provider.as_ref().map(|_| "<dyn LLMProvider>"))
+            .field(
+                "provider",
+                &self.provider.as_ref().map(|_| "<dyn LLMProvider>"),
+            )
             .field("temperature", &self.temperature)
             .field("max_tokens", &self.max_tokens)
             .field("max_retries", &self.max_retries)
@@ -184,6 +214,10 @@ impl fmt::Debug for ConversionConfig {
             .field("fidelity", &self.fidelity)
             .field("pages", &self.pages)
             .field("page_separator", &self.page_separator)
+            .field(
+                "progress_callback",
+                &self.progress_callback.as_ref().map(|_| "<callback>"),
+            )
             .finish()
     }
 }
@@ -229,8 +263,29 @@ impl ConversionConfigBuilder {
         self
     }
 
+    /// Inject a pre-built LLM provider.
+    ///
+    /// Takes **highest priority** over `provider_name`, `model`, and all
+    /// environment variables. Use this when the host application manages its
+    /// own provider pool (e.g. shared rate-limiting, telemetry).
+    ///
+    /// # Resolution order
+    /// 1. `config.provider` ← this method (highest priority)
+    /// 2. `config.provider_name` + `config.model` (named factory)
+    /// 3. `EDGEQUAKE_LLM_PROVIDER` + `EDGEQUAKE_MODEL` env vars
+    /// 4. `ProviderFactory::from_env()` (auto-detect — lowest priority)
     pub fn provider(mut self, provider: Arc<dyn LLMProvider>) -> Self {
         self.config.provider = Some(provider);
+        self
+    }
+
+    /// Set a progress callback for per-page conversion events.
+    ///
+    /// The callback is invoked at the start of conversion, before and after
+    /// each VLM call, and at the end. Callbacks must be `Send + Sync` because
+    /// pages may be processed concurrently.
+    pub fn progress_callback(mut self, cb: Arc<dyn ConversionProgressCallback>) -> Self {
+        self.config.progress_callback = Some(cb);
         self
     }
 
@@ -309,9 +364,7 @@ impl ConversionConfigBuilder {
             )));
         }
         if c.concurrency == 0 {
-            return Err(Pdf2MdError::InvalidConfig(
-                "Concurrency must be ≥ 1".into(),
-            ));
+            return Err(Pdf2MdError::InvalidConfig("Concurrency must be ≥ 1".into()));
         }
         Ok(self.config)
     }

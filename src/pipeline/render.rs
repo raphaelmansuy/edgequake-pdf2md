@@ -59,27 +59,25 @@ fn render_pages_blocking(
 ) -> Result<Vec<(usize, DynamicImage)>, Pdf2MdError> {
     let pdfium = Pdfium::default();
 
-    let document = pdfium
-        .load_pdf_from_file(pdf_path, password)
-        .map_err(|e| {
-            let err_str = format!("{:?}", e);
-            if err_str.contains("Password") || err_str.contains("password") {
-                if password.is_some() {
-                    Pdf2MdError::WrongPassword {
-                        path: pdf_path.to_path_buf(),
-                    }
-                } else {
-                    Pdf2MdError::PasswordRequired {
-                        path: pdf_path.to_path_buf(),
-                    }
+    let document = pdfium.load_pdf_from_file(pdf_path, password).map_err(|e| {
+        let err_str = format!("{:?}", e);
+        if err_str.contains("Password") || err_str.contains("password") {
+            if password.is_some() {
+                Pdf2MdError::WrongPassword {
+                    path: pdf_path.to_path_buf(),
                 }
             } else {
-                Pdf2MdError::CorruptPdf {
+                Pdf2MdError::PasswordRequired {
                     path: pdf_path.to_path_buf(),
-                    detail: err_str,
                 }
             }
-        })?;
+        } else {
+            Pdf2MdError::CorruptPdf {
+                path: pdf_path.to_path_buf(),
+                detail: err_str,
+            }
+        }
+    })?;
 
     let pages = document.pages();
     let total_pages = pages.len() as usize;
@@ -93,16 +91,20 @@ fn render_pages_blocking(
 
     for &idx in page_indices {
         if idx >= total_pages {
-            warn!("Skipping page {} (out of range, total={})", idx + 1, total_pages);
+            warn!(
+                "Skipping page {} (out of range, total={})",
+                idx + 1,
+                total_pages
+            );
             continue;
         }
 
-        let page = pages.get(idx as u16).map_err(|e| {
-            Pdf2MdError::RasterisationFailed {
+        let page = pages
+            .get(idx as u16)
+            .map_err(|e| Pdf2MdError::RasterisationFailed {
                 page: idx + 1,
                 detail: format!("{:?}", e),
-            }
-        })?;
+            })?;
 
         let bitmap = page.render_with_config(&render_config).map_err(|e| {
             Pdf2MdError::RasterisationFailed {
@@ -133,11 +135,9 @@ pub async fn extract_metadata(
     let path = pdf_path.to_path_buf();
     let pwd = password.map(|s| s.to_string());
 
-    tokio::task::spawn_blocking(move || {
-        extract_metadata_blocking(&path, pwd.as_deref())
-    })
-    .await
-    .map_err(|e| Pdf2MdError::Internal(format!("Metadata task panicked: {}", e)))?
+    tokio::task::spawn_blocking(move || extract_metadata_blocking(&path, pwd.as_deref()))
+        .await
+        .map_err(|e| Pdf2MdError::Internal(format!("Metadata task panicked: {}", e)))?
 }
 
 /// Blocking implementation of metadata extraction.
@@ -147,12 +147,13 @@ fn extract_metadata_blocking(
 ) -> Result<DocumentMetadata, Pdf2MdError> {
     let pdfium = Pdfium::default();
 
-    let document = pdfium
-        .load_pdf_from_file(pdf_path, password)
-        .map_err(|e| Pdf2MdError::CorruptPdf {
-            path: pdf_path.to_path_buf(),
-            detail: format!("{:?}", e),
-        })?;
+    let document =
+        pdfium
+            .load_pdf_from_file(pdf_path, password)
+            .map_err(|e| Pdf2MdError::CorruptPdf {
+                path: pdf_path.to_path_buf(),
+                detail: format!("{:?}", e),
+            })?;
 
     let metadata = document.metadata();
     let pages = document.pages();
@@ -160,7 +161,11 @@ fn extract_metadata_blocking(
     let get_meta = |tag: PdfDocumentMetadataTagType| -> Option<String> {
         metadata.get(tag).and_then(|t| {
             let v = t.value().to_string();
-            if v.is_empty() { None } else { Some(v) }
+            if v.is_empty() {
+                None
+            } else {
+                Some(v)
+            }
         })
     };
 

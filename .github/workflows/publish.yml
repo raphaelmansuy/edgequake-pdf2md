@@ -1,0 +1,149 @@
+name: Publish
+
+on:
+  # Only trigger on tags matching version pattern (vX.Y.Z)
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (vX.Y.Z)'
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Pre-Publish Checks: Run all quality gates before publishing
+  # ──────────────────────────────────────────────────────────────────────────
+  pre-publish-checks:
+    name: Pre-Publish Checks
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: get-version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Publishing version: ${VERSION}"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # 1. Verify version matches Cargo.toml
+      - name: Verify version in Cargo.toml
+        run: |
+          VERSION_TAG="${{ steps.get-version.outputs.version }}"
+          VERSION_TAG_NO_V="${VERSION_TAG#v}"
+          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "//' | sed 's/".*//')
+          if [ "$VERSION_TAG_NO_V" != "$CARGO_VERSION" ]; then
+            echo "❌ Version mismatch!"
+            echo "   Tag: $VERSION_TAG_NO_V"
+            echo "   Cargo.toml: $CARGO_VERSION"
+            exit 1
+          fi
+          echo "✓ Version tag matches Cargo.toml: $CARGO_VERSION"
+
+      # 2. Format check
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # 3. Clippy lint
+      - name: Run Clippy
+        run: cargo clippy --all-features -- -D warnings
+
+      # 4. Unit tests
+      - name: Run unit tests
+        run: cargo test --lib --no-fail-fast
+
+      # 5. Build release
+      - name: Build release
+        run: cargo build --release --all-features
+
+      # 6. Documentation
+      - name: Build documentation
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      # 7. Security audit
+      - name: Security audit
+        run: cargo audit
+
+      # 8. Verify README exists
+      - name: Verify README
+        run: |
+          if [ ! -f "README.md" ]; then
+            echo "❌ README.md is missing!"
+            exit 1
+          fi
+          echo "✓ README.md exists"
+
+      # 9. Verify LICENSE exists
+      - name: Verify LICENSE
+        run: |
+          if [ ! -f "LICENSE" ]; then
+            echo "❌ LICENSE file is missing!"
+            exit 1
+          fi
+          echo "✓ LICENSE exists"
+
+      # 10. Check CHANGELOG
+      - name: Verify CHANGELOG
+        run: |
+          if [ ! -f "CHANGELOG.md" ]; then
+            echo "⚠ CHANGELOG.md is missing (optional but recommended)"
+          else
+            echo "✓ CHANGELOG.md exists"
+          fi
+
+      - name: All pre-publish checks passed ✅
+        run: echo "Ready to publish version ${{ steps.get-version.outputs.version }}"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Publish to crates.io
+  # ──────────────────────────────────────────────────────────────────────────
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: pre-publish-checks
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Publish to crates.io
+        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            CHANGELOG.md
+            README.md
+          body: |
+            ## ${{ needs.pre-publish-checks.outputs.version }}
+            
+            Published to [crates.io](https://crates.io/crates/edgequake-pdf2md/${{ needs.pre-publish-checks.outputs.version }})
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

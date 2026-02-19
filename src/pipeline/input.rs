@@ -19,10 +19,7 @@ pub enum ResolvedInput {
     Local(PathBuf),
     /// Input was a URL; PDF downloaded to a temp directory.
     /// The `TempDir` is kept alive to prevent cleanup until processing completes.
-    Downloaded {
-        path: PathBuf,
-        _temp_dir: TempDir,
-    },
+    Downloaded { path: PathBuf, _temp_dir: TempDir },
 }
 
 impl ResolvedInput {
@@ -44,10 +41,7 @@ pub fn is_url(input: &str) -> bool {
 ///
 /// If the input is a URL, download it to a temporary directory.
 /// If the input is a local file, validate it exists and is readable.
-pub async fn resolve_input(
-    input: &str,
-    timeout_secs: u64,
-) -> Result<ResolvedInput, Pdf2MdError> {
+pub async fn resolve_input(input: &str, timeout_secs: u64) -> Result<ResolvedInput, Pdf2MdError> {
     if is_url(input) {
         download_url(input, timeout_secs).await
     } else {
@@ -70,10 +64,7 @@ fn resolve_local(path_str: &str) -> Result<ResolvedInput, Pdf2MdError> {
             use std::io::Read;
             let mut magic = [0u8; 4];
             if f.read_exact(&mut magic).is_ok() && &magic != b"%PDF" {
-                return Err(Pdf2MdError::NotAPdf {
-                    path,
-                    magic,
-                });
+                return Err(Pdf2MdError::NotAPdf { path, magic });
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
@@ -100,23 +91,19 @@ async fn download_url(url: &str, timeout_secs: u64) -> Result<ResolvedInput, Pdf
             reason: e.to_string(),
         })?;
 
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| {
-            if e.is_timeout() {
-                Pdf2MdError::DownloadTimeout {
-                    url: url.to_string(),
-                    secs: timeout_secs,
-                }
-            } else {
-                Pdf2MdError::DownloadFailed {
-                    url: url.to_string(),
-                    reason: e.to_string(),
-                }
+    let response = client.get(url).send().await.map_err(|e| {
+        if e.is_timeout() {
+            Pdf2MdError::DownloadTimeout {
+                url: url.to_string(),
+                secs: timeout_secs,
             }
-        })?;
+        } else {
+            Pdf2MdError::DownloadFailed {
+                url: url.to_string(),
+                reason: e.to_string(),
+            }
+        }
+    })?;
 
     if !response.status().is_success() {
         return Err(Pdf2MdError::DownloadFailed {
@@ -200,10 +187,7 @@ mod tests {
         assert_eq!(PageSelection::All.to_indices(5), vec![0, 1, 2, 3, 4]);
         assert_eq!(PageSelection::Single(3).to_indices(5), vec![2]);
         assert_eq!(PageSelection::Single(6).to_indices(5), Vec::<usize>::new());
-        assert_eq!(
-            PageSelection::Range(2, 4).to_indices(5),
-            vec![1, 2, 3]
-        );
+        assert_eq!(PageSelection::Range(2, 4).to_indices(5), vec![1, 2, 3]);
         assert_eq!(
             PageSelection::Set(vec![1, 3, 5]).to_indices(5),
             vec![0, 2, 4]
