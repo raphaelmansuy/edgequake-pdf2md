@@ -411,10 +411,19 @@ async fn main() -> Result<()> {
         .init();
 
     // ── Ensure PDFium engine is available ───────────────────────────────────
-    // On the very first run (or after the cache is cleared), pdf2md downloads
-    // the PDFium library (~30 MB) from bblanchon/pdfium-binaries to
+    // When compiled with `--features bundled`, the pdfium shared library was
+    // embedded at compile time.  We just extract it (if needed) and continue.
+    // Without `bundled`, on the very first run pdf2md downloads the library
+    // (~30 MB) from bblanchon/pdfium-binaries to
     //   ~/.cache/pdf2md/pdfium-{VERSION}/
     // Subsequent startups skip this block entirely (instant path check only).
+    #[cfg(feature = "bundled")]
+    {
+        tokio::task::block_in_place(|| pdfium_auto::ensure_pdfium_bundled())
+            .context("Failed to extract bundled PDFium engine")?;
+    }
+
+    #[cfg(not(feature = "bundled"))]
     if !pdfium_auto::is_pdfium_cached() {
         if !cli.quiet {
             let dl_bar = ProgressBar::new(0);

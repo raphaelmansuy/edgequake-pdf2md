@@ -193,6 +193,16 @@ fn resolve_provider(config: &ConversionConfig) -> Result<Arc<dyn LLMProvider>, P
         }
     }
 
+    // Prefer OpenAI explicitly when an OpenAI API key is present.
+    // This ensures users with multiple provider keys (e.g. Gemini + OpenAI)
+    // will default to OpenAI unless they explicitly request another provider.
+    if let Ok(openai_key) = std::env::var("OPENAI_API_KEY") {
+        if !openai_key.is_empty() {
+            let model = config.model.as_deref().unwrap_or("gpt-4.1-nano");
+            return create_vision_provider("openai", model);
+        }
+    }
+
     let (llm_provider, _) =
         ProviderFactory::from_env().map_err(|e| Pdf2MdError::ProviderNotConfigured {
             provider: "auto".to_string(),
