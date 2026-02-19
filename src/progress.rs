@@ -76,8 +76,8 @@ pub trait ConversionProgressCallback: Send + Sync {
     /// # Arguments
     /// * `page_num`     — 1-indexed page number
     /// * `total_pages`  — total pages
-    /// * `markdown_len` — byte length of the produced Markdown (useful for
-    ///                    progress bars that track output size)
+    /// * `markdown_len` — byte length of the produced Markdown
+    ///   (useful for progress bars that track output size)
     fn on_page_complete(&self, page_num: usize, total_pages: usize, markdown_len: usize) {
         let _ = (page_num, total_pages, markdown_len);
     }

@@ -2,7 +2,7 @@
 name    = "edgequake-pdf2md"
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.88"
 description  = "Convert PDF documents to Markdown using Vision Language Models — CLI and library"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/raphaelmansuy/edgequake-pdf2md"

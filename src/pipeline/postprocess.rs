@@ -146,7 +146,7 @@ fn fix_broken_tables(input: &str) -> String {
                 // Insert separator row
                 let col_count = line.matches('|').count().saturating_sub(1).max(1);
                 let sep: String = std::iter::once("|")
-                    .chain(std::iter::repeat(" --- |").take(col_count))
+                    .chain(std::iter::repeat_n(" --- |", col_count))
                     .collect();
                 result.push(sep);
             }
