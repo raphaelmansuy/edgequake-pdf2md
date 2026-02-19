@@ -15,6 +15,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  PDFIUM_VERSION: "7690"
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────────
@@ -62,25 +63,21 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      # 3. Clippy lint
+      # 3. Clippy lint (skip bundled feature — it requires pdfium download)
       - name: Run Clippy
-        run: cargo clippy --all-features -- -D warnings
+        run: cargo clippy --no-default-features --features cli -- -D warnings
 
       # 4. Unit tests
       - name: Run unit tests
-        run: cargo test --lib --no-fail-fast
+        run: cargo test --lib --no-default-features --no-fail-fast
 
-      # 5. Build release
-      - name: Build release
-        run: cargo build --release --all-features
-
-      # 6. Documentation
+      # 5. Documentation
       - name: Build documentation
-        run: cargo doc --no-deps --all-features
+        run: cargo doc --no-deps --no-default-features --features cli
         env:
           RUSTDOCFLAGS: -D warnings
 
-      # 7. Security audit
+      # 6. Security audit
       - name: Security audit
         run: cargo audit
 
@@ -128,13 +125,42 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Publish to crates.io
-        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      # Pre-download pdfium so build.rs can embed it when cargo verifies the package.
+      - name: Cache pdfium library (Linux x64)
+        id: pdfium-cache
+        uses: actions/cache@v4
+        with:
+          path: pdfium-lib
+          key: pdfium-${{ env.PDFIUM_VERSION }}-x86_64-unknown-linux-gnu
+
+      - name: Download pdfium
+        if: steps.pdfium-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -L -f -o pdfium.tgz \
+            "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${{ env.PDFIUM_VERSION }}/pdfium-linux-x64.tgz"
+          mkdir -p pdfium-lib && tar xzf pdfium.tgz -C pdfium-lib && rm pdfium.tgz
+
+      - name: Set PDFIUM_BUNDLE_LIB
+        run: echo "PDFIUM_BUNDLE_LIB=$PWD/pdfium-lib/lib/libpdfium.so" >> $GITHUB_ENV
+
+      # Publish pdfium-auto first (dependency of edgequake-pdf2md); idempotent.
+      - name: Publish pdfium-auto
+        continue-on-error: true
+        run: cargo publish -p pdfium-auto --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      # Allow crates.io CDN to index pdfium-auto before publishing the dependent.
+      - name: Wait for crates.io index (45 s)
+        run: sleep 45
+
+      - name: Publish edgequake-pdf2md
+        run: cargo publish -p edgequake-pdf2md --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             CHANGELOG.md
