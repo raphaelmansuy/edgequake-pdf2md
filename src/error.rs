@@ -131,16 +131,14 @@ pub enum Pdf2MdError {
 
     // ── Pdfium binding errors ─────────────────────────────────────────────
     /// Could not bind to a pdfium library.
-    #[error("Failed to bind to pdfium library: {0}\n\n\
-Quick fix — run the bundled setup script:\n\
-  ./scripts/setup-pdfium.sh\n\n\
-Or install manually:\n\
-  macOS:   brew install pdfium-chromium  (or download from github.com/bblanchon/pdfium-binaries)\n\
-  Linux:   Download from github.com/bblanchon/pdfium-binaries, place libpdfium.so next to the binary or in /usr/local/lib\n\
-  Windows: Download pdfium.dll from github.com/bblanchon/pdfium-binaries, place next to pdf2md.exe\n\n\
-Then set the library path:\n\
-  macOS:   export DYLD_LIBRARY_PATH=$(pwd)\n\
-  Linux:   export LD_LIBRARY_PATH=$(pwd)\n")]
+    #[error(
+        "Failed to bind to pdfium library: {0}\n\n\
+PDFium is normally downloaded automatically on first run.\n\
+If the auto-download failed, you can:\n\
+  • Check your internet connection and try again.\n\
+  • Set PDFIUM_LIB_PATH=/path/to/libpdfium to use an existing copy.\n\
+  • Run `./scripts/setup-pdfium.sh` and set PDFIUM_LIB_PATH to the result.\n"
+    )]
     PdfiumBindingFailed(String),
 
     // ── Catch-all ─────────────────────────────────────────────────────────
