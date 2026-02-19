@@ -131,7 +131,7 @@ impl ConversionProgressCallback for CliProgressCallback {
         self.bar.inc(1);
     }
 
-    fn on_page_error(&self, page_num: usize, total: usize, error: &str) {
+    fn on_page_error(&self, page_num: usize, total: usize, error: String) {
         let elapsed_ms = self
             .start_times
             .lock()
@@ -144,9 +144,9 @@ impl ConversionProgressCallback for CliProgressCallback {
 
         // Truncate very long error messages to keep output tidy.
         let msg = if error.len() > 80 {
-            format!("{}…", &error[..79])
+            format!("{}\u{2026}", &error[..79])
         } else {
-            error.to_string()
+            error
         };
 
         self.bar.println(format!(

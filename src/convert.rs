@@ -386,7 +386,7 @@ async fn process_concurrent(
             if let Some(ref cb) = config_clone.progress_callback {
                 match &result.error {
                     None => cb.on_page_complete(page_num, total_pages, result.markdown.len()),
-                    Some(e) => cb.on_page_error(page_num, total_pages, &e.to_string()),
+                    Some(e) => cb.on_page_error(page_num, total_pages, e.to_string()),
                 }
             }
             result
@@ -425,7 +425,7 @@ async fn process_sequential(
         if let Some(ref cb) = config.progress_callback {
             match &result.error {
                 None => cb.on_page_complete(page_num, total_pages, result.markdown.len()),
-                Some(e) => cb.on_page_error(page_num, total_pages, &e.to_string()),
+                Some(e) => cb.on_page_error(page_num, total_pages, e.to_string()),
             }
         }
 
