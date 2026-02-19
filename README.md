@@ -193,7 +193,7 @@ impl ConversionProgressCallback for MyProgress {
     fn on_page_complete(&self, page: usize, total: usize, chars: usize) {
         eprintln!("  ✓ Page {page}/{total} — {chars} chars");
     }
-    fn on_page_error(&self, page: usize, total: usize, error: &str) {
+    fn on_page_error(&self, page: usize, total: usize, error: String) {
         eprintln!("  ✗ Page {page}/{total} failed: {error}");
     }
     fn on_conversion_complete(&self, total: usize, success: usize) {

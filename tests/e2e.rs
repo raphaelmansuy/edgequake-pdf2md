@@ -441,3 +441,61 @@ async fn test_convert_sample_text_first2_pages() {
         result.markdown
     );
 }
+
+// ── Callback API unit tests (no LLM calls, always run) ───────────────────────
+
+/// Regression test for issues #8 and #9.
+///
+/// Verifies that `ConversionProgressCallback` can be boxed as `Arc<dyn …>`
+/// and moved into a `tokio::spawn` task without triggering the HRTB
+/// "Send is not general enough" compiler error that existed when
+/// `on_page_error` accepted `error: &str`.
+#[tokio::test]
+async fn test_callback_send_in_tokio_spawn() {
+    use edgequake_pdf2md::ConversionProgressCallback;
+    use std::sync::{Arc, Mutex};
+
+    struct ErrorLogger {
+        log: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl ConversionProgressCallback for ErrorLogger {
+        fn on_page_error(&self, _page: usize, _total: usize, error: String) {
+            self.log.lock().unwrap().push(error);
+        }
+    }
+
+    let logger = Arc::new(ErrorLogger {
+        log: Arc::new(Mutex::new(vec![])),
+    });
+    let log_ref = Arc::clone(&logger.log);
+
+    // Cast to Arc<dyn ConversionProgressCallback> — the type that the library
+    // actually stores and passes through the pipeline.
+    let cb: Arc<dyn ConversionProgressCallback> =
+        Arc::clone(&logger) as Arc<dyn ConversionProgressCallback>;
+
+    // Moving `cb` into tokio::spawn requires the future to be Send.
+    // This line would fail to compile if on_page_error still took &str.
+    tokio::spawn(async move {
+        cb.on_page_error(2, 5, "timeout after 3 retries".to_string());
+    })
+    .await
+    .expect("spawn must succeed");
+
+    let captured = log_ref.lock().unwrap().clone();
+    assert_eq!(captured, vec!["timeout after 3 retries"]);
+}
+
+/// Verify that a Noop callback compiles and does not panic.
+#[test]
+fn test_noop_callback_is_send_sync() {
+    use edgequake_pdf2md::{ConversionProgressCallback, NoopProgressCallback};
+    use std::sync::Arc;
+
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<NoopProgressCallback>();
+
+    let cb: Arc<dyn ConversionProgressCallback> = Arc::new(NoopProgressCallback);
+    cb.on_page_error(1, 1, "an error".to_string());
+}

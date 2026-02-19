@@ -11,6 +11,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.2] — 2026-02-20
+
+### Fixed
+
+#### Issues #8 and #9 — `on_page_error` HRTB / `Send` fix
+
+- **Breaking change (minor)**: `ConversionProgressCallback::on_page_error`
+  now takes `error: String` instead of `error: &str`.
+
+  **Why**: The `&str` parameter introduced a higher-ranked trait bound
+  (`for<'a> &'a str`) that prevented the `Future` produced by
+  `#[async_trait]` method implementations from being `Send`. Callers using
+  `edgequake-pdf2md` from an `#[async_trait]` `impl Something` (e.g. a
+  Tokio server task processor) would see:
+
+  ```
+  error: implementation of `Send` is not general enough
+    = note: `Send` would have to be implemented for `&str`
+  ```
+
+  Changing the parameter to `String` eliminates the HRTB and makes the
+  future `Send` unconditionally.
+
+  **Migration**: update any `impl ConversionProgressCallback` you have:
+  ```rust
+  // Before
+  fn on_page_error(&self, page: usize, total: usize, error: &str) { … }
+  // After
+  fn on_page_error(&self, page: usize, total: usize, error: String) { … }
+  ```
+  If you were passing the error to a function that takes `&str`, use
+  `error.as_str()` or `&error`.
+
+- Internal call sites in `convert.rs` updated to pass `e.to_string()` (no
+  `&` prefix) — no more temporary-borrow HRTB at the pipeline level.
+
+### Added
+
+- Unit test `progress::tests::on_page_error_is_send_when_used_in_spawn`:
+  moves an `Arc<dyn ConversionProgressCallback>` into `tokio::spawn` to
+  prove the future is `Send` at compile time.
+- Unit test `progress::tests::on_page_error_receives_owned_string`:
+  verifies the error `String` is forwarded by value without truncation.
+- Integration tests `test_callback_send_in_tokio_spawn` and
+  `test_noop_callback_is_send_sync` added to `tests/e2e.rs` (always run,
+  no API key required).
+
+---
+
 ## [0.4.1] — 2026-02-19
 
 ### Fixed

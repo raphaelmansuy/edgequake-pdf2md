@@ -88,7 +88,14 @@ pub trait ConversionProgressCallback: Send + Sync {
     /// * `page_num`    — 1-indexed page number
     /// * `total_pages` — total pages
     /// * `error`       — human-readable error description
-    fn on_page_error(&self, page_num: usize, total_pages: usize, error: &str) {
+    ///
+    /// # Note (v0.4.2)
+    /// The parameter was changed from `&str` to `String` to eliminate the
+    /// higher-ranked trait bound (HRTB) `for<'a> &'a str` that prevented
+    /// the future returned by `#[async_trait]` methods from being `Send`.
+    /// Callers that previously passed `&e.to_string()` should now pass
+    /// `e.to_string()` directly.
+    fn on_page_error(&self, page_num: usize, total_pages: usize, error: String) {
         let _ = (page_num, total_pages, error);
     }
 
@@ -138,7 +145,7 @@ mod tests {
             self.completes.fetch_add(1, Ordering::SeqCst);
         }
 
-        fn on_page_error(&self, _page_num: usize, _total_pages: usize, _error: &str) {
+        fn on_page_error(&self, _page_num: usize, _total_pages: usize, _error: String) {
             self.errors.fetch_add(1, Ordering::SeqCst);
         }
 
@@ -153,7 +160,7 @@ mod tests {
         cb.on_conversion_start(5);
         cb.on_page_start(1, 5);
         cb.on_page_complete(1, 5, 42);
-        cb.on_page_error(2, 5, "some error");
+        cb.on_page_error(2, 5, "some error".to_string());
         cb.on_conversion_complete(5, 4);
     }
 
@@ -175,7 +182,7 @@ mod tests {
         tracker.on_page_start(2, 3);
         tracker.on_page_complete(2, 3, 200);
         tracker.on_page_start(3, 3);
-        tracker.on_page_error(3, 3, "VLM timeout");
+        tracker.on_page_error(3, 3, "VLM timeout".to_string());
 
         assert_eq!(tracker.starts.load(Ordering::SeqCst), 3);
         assert_eq!(tracker.completes.load(Ordering::SeqCst), 2);
@@ -191,5 +198,76 @@ mod tests {
         cb.on_conversion_start(10);
         cb.on_page_start(1, 10);
         cb.on_page_complete(1, 10, 512);
+    }
+
+    /// Regression test for issues #8 and #9.
+    ///
+    /// Before the fix, `on_page_error` took `error: &str`, which introduced the
+    /// HRTB `for<'a> &'a str`. That made the future produced by
+    /// `#[async_trait]` methods non-`Send`, causing compilation failures like:
+    ///
+    ///   error: implementation of `Send` is not general enough
+    ///     = note: `Send` would have to be implemented for `&str`
+    ///
+    /// Moving to `error: String` eliminates the HRTB. This test proves the
+    /// callback can be moved into a `tokio::spawn` task (which requires `Send`).
+    #[tokio::test]
+    async fn on_page_error_is_send_when_used_in_spawn() {
+        use std::sync::Mutex;
+
+        struct StringCollector {
+            errors: Arc<Mutex<Vec<String>>>,
+        }
+
+        impl ConversionProgressCallback for StringCollector {
+            fn on_page_error(&self, _page_num: usize, _total_pages: usize, error: String) {
+                self.errors.lock().unwrap().push(error);
+            }
+        }
+
+        let collector = Arc::new(StringCollector {
+            errors: Arc::new(Mutex::new(Vec::new())),
+        });
+
+        let cb: Arc<dyn ConversionProgressCallback> =
+            Arc::clone(&collector) as Arc<dyn ConversionProgressCallback>;
+
+        // Moving cb into tokio::spawn proves Arc<dyn ConversionProgressCallback>
+        // is Send — which in turn requires all &self method args to be 'static.
+        tokio::spawn(async move {
+            cb.on_page_error(1, 5, "error from spawn".to_string());
+        })
+        .await
+        .unwrap();
+
+        let errors = collector.errors.lock().unwrap();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0], "error from spawn");
+    }
+
+    /// Extra: verify the error String is forwarded by value (no copy/clone overhead).
+    #[test]
+    fn on_page_error_receives_owned_string() {
+        use std::sync::Mutex;
+
+        struct ErrorCapture {
+            captured: Arc<Mutex<Option<String>>>,
+        }
+
+        impl ConversionProgressCallback for ErrorCapture {
+            fn on_page_error(&self, _p: usize, _t: usize, error: String) {
+                *self.captured.lock().unwrap() = Some(error);
+            }
+        }
+
+        let capture = ErrorCapture {
+            captured: Arc::new(Mutex::new(None)),
+        };
+
+        let long_error = "x".repeat(200);
+        capture.on_page_error(3, 10, long_error.clone());
+
+        let got = capture.captured.lock().unwrap().clone().unwrap();
+        assert_eq!(got, long_error, "Full error string should be forwarded");
     }
 }
