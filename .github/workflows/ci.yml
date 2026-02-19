@@ -104,7 +104,7 @@ jobs:
             lib_in_archive: lib/libpdfium.dylib
 
           # macOS — Intel (x86_64)
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             pdfium_asset: pdfium-mac-x64.tgz
             lib_in_archive: lib/libpdfium.dylib
