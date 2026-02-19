@@ -71,9 +71,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: taiki-e/install-action@cargo-audit
+      - name: Run security audit
+        run: cargo audit
 
   # ──────────────────────────────────────────────────────────────────────────
   # Docs: Build documentation and test doc examples
