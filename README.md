@@ -27,22 +27,11 @@ Inspired by [pyzerox](https://github.com/getomni-ai/zerox), rebuilt in Rust for 
 
 ## Quick Start
 
-### 1. Install pdfium
+> **Zero setup for pdfium.** The correct PDFium binary (~30 MB) is downloaded automatically on
+> first run and cached in `~/.cache/pdf2md/pdfium-7690/`. No `DYLD_LIBRARY_PATH` required.
+> Use `PDFIUM_LIB_PATH` to point to an existing copy instead.
 
-```bash
-# Auto-detect OS & architecture (recommended)
-./scripts/setup-pdfium.sh
-
-# macOS: set library path
-export DYLD_LIBRARY_PATH="$(pwd)"
-
-# Linux: set library path
-export LD_LIBRARY_PATH="$(pwd)"
-```
-
-> **Note:** pdfium doesn't have an official Homebrew package. Use the setup script above or see [docs/installation.md](docs/installation.md) for manual installation options.
-
-### 2. Set an API key
+### 1. Set an API key
 
 ```bash
 export OPENAI_API_KEY="sk-..."    # OpenAI (recommended)
@@ -52,7 +41,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."  # Anthropic
 export GEMINI_API_KEY="AI..."          # Google Gemini
 ```
 
-### 3. Build & run
+### 2. Build & run
 
 ```bash
 cargo build --release --features cli
@@ -141,7 +130,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-edgequake-pdf2md = "0.2"
+edgequake-pdf2md = "0.3"
 tokio = { version = "1", features = ["full"] }
 ```
 

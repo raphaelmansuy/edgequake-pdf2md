@@ -23,6 +23,21 @@ use pdfium_render::prelude::*;
 use std::path::Path;
 use tracing::{debug, info, warn};
 
+/// Obtain a `Pdfium` instance via pdfium-auto (download-on-first-use).
+///
+/// # Errors
+/// Returns `Pdf2MdError::Internal` when the library cannot be downloaded or
+/// loaded.  The error message tells the user exactly what happened and includes
+/// a `PDFIUM_LIB_PATH` override hint.
+fn get_pdfium() -> Result<Pdfium, Pdf2MdError> {
+    pdfium_auto::bind_pdfium_silent().map_err(|e| {
+        Pdf2MdError::Internal(format!(
+            "PDFium library unavailable: {e}\n\
+             Hint: set PDFIUM_LIB_PATH=/path/to/libpdfium to use an existing copy."
+        ))
+    })
+}
+
 /// Rasterise selected pages of a PDF into images.
 ///
 /// This runs inside `spawn_blocking` since pdfium operations are CPU-bound.
@@ -57,7 +72,7 @@ fn render_pages_blocking(
     password: Option<&str>,
     page_indices: &[usize],
 ) -> Result<Vec<(usize, DynamicImage)>, Pdf2MdError> {
-    let pdfium = Pdfium::default();
+    let pdfium = get_pdfium()?;
 
     let document = pdfium.load_pdf_from_file(pdf_path, password).map_err(|e| {
         let err_str = format!("{:?}", e);
@@ -145,7 +160,7 @@ fn extract_metadata_blocking(
     pdf_path: &Path,
     password: Option<&str>,
 ) -> Result<DocumentMetadata, Pdf2MdError> {
-    let pdfium = Pdfium::default();
+    let pdfium = get_pdfium()?;
 
     let document =
         pdfium

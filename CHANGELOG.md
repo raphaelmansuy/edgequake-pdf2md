@@ -11,6 +11,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] — 2025-06-06
+
+### Added
+
+#### Zero-friction PDFium setup — `crates/pdfium-auto` (new crate)
+
+A new `pdfium-auto` sub-crate eliminates all manual pdfium installation steps.
+Previously, users had to run `./scripts/setup-pdfium.sh`, manually set
+`DYLD_LIBRARY_PATH` / `LD_LIBRARY_PATH`, or configure the library path before
+running `pdf2md`. Starting from v0.3.0, the correct binary is fetched
+automatically.
+
+**How it works:**
+
+1. On first call, detects the current OS / architecture.
+2. Downloads the matching `.tgz` from
+   [bblanchon/pdfium-binaries](https://github.com/bblanchon/pdfium-binaries)
+   (chromium/7690, ~30 MB) with a live progress bar in the CLI.
+3. Extracts `lib/libpdfium.dylib` (or `.so` / `.dll`) to
+   `~/.cache/pdf2md/pdfium-7690/` and caches it permanently.
+4. Loads the library via `Pdfium::bind_to_library` — no `DYLD_LIBRARY_PATH` needed.
+5. All subsequent runs skip the network entirely — the cached path is reused in
+   a process-wide `OnceLock<PathBuf>`.
+
+**Platform support**: macOS arm64 / x86_64, Linux x86_64 / aarch64,
+Windows x86_64 / aarch64 / x86.
+
+**Public API additions in `pdfium-auto`:**
+- `bind_pdfium_silent()` — one-shot bind, no progress callback
+- `bind_pdfium(on_progress)` — bind with optional byte-progress callback
+- `bind_pdfium_from_path(path)` — explicit path binding
+- `ensure_pdfium_library(on_progress)` — download-and-cache only (no bind)
+- `is_pdfium_cached()` — synchronous check, no network
+- `cached_pdfium_path()` — returns `Option<PathBuf>` if already cached
+- `pdfium_cache_dir()` — returns the platform cache directory
+
+**Environment variable overrides:**
+- `PDFIUM_LIB_PATH` — skip download, use an existing library at this path
+- `PDFIUM_AUTO_CACHE_DIR` — override the default cache directory
+
+#### CLI download progress bar
+
+When `pdf2md` is run for the first time (and pdfium is not yet cached), a
+green progress bar like the following appears before conversion begins:
+
+```
+Downloading PDFium  [████████████████░░░░░░░░░░░░] 18.2 MiB / 30.5 MiB  ETA 00:00:08
+```
+
+Once cached, this step takes zero milliseconds and is skipped silently.
+
+### Changed
+
+- **Cargo workspace** — the project is now a multi-crate workspace
+  (`edgequake-pdf2md` + `pdfium-auto`).
+- `render.rs` — both `render_pages_blocking` and `extract_metadata_blocking` now
+  call `pdfium_auto::bind_pdfium_silent()` instead of `Pdfium::default()`.
+- Simplified the `PdfiumBindingFailed` error message to guide users to
+  `PDFIUM_LIB_PATH` rather than the now-obsolete `DYLD_LIBRARY_PATH` approach.
+
+### Removed
+
+- `DYLD_LIBRARY_PATH` / `LD_LIBRARY_PATH` from the CLI `SETUP:` help block.
+  These env vars are no longer required for normal operation.
+
+---
+
 ## [0.2.1] — 2026-02-19
 
 ### Added

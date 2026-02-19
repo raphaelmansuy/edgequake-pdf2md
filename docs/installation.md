@@ -3,111 +3,15 @@
 ## Prerequisites
 
 - **Rust** ≥ 1.80 (for building from source)
-- **libpdfium** — the Google Chromium PDF rendering library
 - An **LLM API key** (OpenAI, Anthropic, Google Gemini, or a local Ollama instance)
 
-## Step 1: Install libpdfium
+> **No manual PDFium setup required.** Starting from v0.3.0, `edgequake-pdf2md` automatically
+> downloads the correct [pdfium](https://pdfium.googlesource.com/pdfium/) binary (~30 MB) from
+> [bblanchon/pdfium-binaries](https://github.com/bblanchon/pdfium-binaries) on first run and
+> caches it in `~/.cache/pdf2md/pdfium-7690/`. Subsequent runs use the cached copy with no
+> network access.
 
-`edgequake-pdf2md` uses [pdfium](https://pdfium.googlesource.com/pdfium/) to rasterise PDF pages. The library must be available at runtime.
-
-### Automatic (recommended)
-
-Run the bundled setup script — it detects your OS and architecture automatically:
-
-```bash
-./scripts/setup-pdfium.sh
-```
-
-This downloads the correct binary from [bblanchon/pdfium-binaries](https://github.com/bblanchon/pdfium-binaries) and places it in the current directory.
-
-### macOS
-
-> **Note:** pdfium does not have an official Homebrew formula. Use the automated setup script or manual download instead.
-
-**Option A — Setup script (recommended):**
-```bash
-./scripts/setup-pdfium.sh
-export DYLD_LIBRARY_PATH="$(pwd)"
-```
-
-**Option B — Manual download:**
-```bash
-# Apple Silicon (M1/M2/M3/M4)
-curl -fSL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7690/pdfium-mac-arm64.tgz" -o /tmp/pdfium.tgz
-
-# Intel Mac
-curl -fSL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7690/pdfium-mac-x64.tgz" -o /tmp/pdfium.tgz
-
-tar -xzf /tmp/pdfium.tgz -C /tmp lib/libpdfium.dylib
-mv /tmp/lib/libpdfium.dylib .
-export DYLD_LIBRARY_PATH="$(pwd)"
-```
-
-**Option C — Homebrew tap (community-maintained):**
-
-If you prefer installing via Homebrew, a community tap can be used to
-install the prebuilt PDFium binaries. This project maintains a minimal tap
-that fetches upstream prebuilt assets and installs the native library.
-
-```bash
-# Replace USER with the GitHub owner who published the tap
-brew tap USER/homebrew-pdfium-tap
-brew install USER/pdfium
-
-# Then set the library path if required
-export DYLD_LIBRARY_PATH="$(brew --prefix USER/pdfium)/lib:$DYLD_LIBRARY_PATH"
-```
-
-Notes:
-- This is a community-maintained tap; upstream binary assets change often.
-- Prefer pinning a specific upstream release or adding `sha256` to the
-	formula before using in production.
-
-
-### Linux
-
-**Option A — Setup script:**
-```bash
-./scripts/setup-pdfium.sh
-export LD_LIBRARY_PATH="$(pwd)"
-```
-
-**Option B — Manual download:**
-```bash
-# x86_64
-curl -fSL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7690/pdfium-linux-x64.tgz" -o /tmp/pdfium.tgz
-
-# ARM64 (Raspberry Pi 4, AWS Graviton)
-curl -fSL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7690/pdfium-linux-arm64.tgz" -o /tmp/pdfium.tgz
-
-# Alpine Linux / musl
-curl -fSL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7690/pdfium-linux-musl-x64.tgz" -o /tmp/pdfium.tgz
-
-tar -xzf /tmp/pdfium.tgz -C /tmp lib/libpdfium.so
-mv /tmp/lib/libpdfium.so .
-export LD_LIBRARY_PATH="$(pwd)"
-```
-
-**Option C — System-wide install:**
-```bash
-sudo mv libpdfium.so /usr/local/lib/
-sudo ldconfig
-```
-
-### Windows
-
-```powershell
-# Download (PowerShell)
-Invoke-WebRequest -Uri "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7690/pdfium-win-x64.tgz" -OutFile pdfium.tgz
-
-# Extract
-tar -xzf pdfium.tgz bin/pdfium.dll
-Move-Item bin\pdfium.dll .
-```
-
-Place `pdfium.dll` in the same directory as `pdf2md.exe`, or add its directory to your `PATH`.
-
-## Step 2: Build pdf2md
+## Step 1: Build pdf2md
 
 ```bash
 # Clone the repository
@@ -123,7 +27,7 @@ cargo install --path . --features cli
 
 The binary is at `target/release/pdf2md`.
 
-## Step 3: Set Up an LLM Provider
+## Step 2: Set Up an LLM Provider
 
 Set at least one API key:
 
@@ -148,7 +52,7 @@ ollama pull llava
 pdf2md --provider ollama --model llava document.pdf
 ```
 
-## Step 4: Verify
+## Step 3: Verify
 
 ```bash
 # Check pdfium is found
@@ -178,11 +82,11 @@ A Docker image with pdfium pre-installed is planned. See the project README for 
 
 ### "Failed to bind to pdfium library"
 
-The pdfium native library cannot be found. Solutions:
+PDFium is downloaded automatically on first run. If auto-download fails:
 
-1. Run `./scripts/setup-pdfium.sh` to auto-download
-2. Set `DYLD_LIBRARY_PATH` (macOS) or `LD_LIBRARY_PATH` (Linux) to the directory containing the library
-3. Place the library next to the `pdf2md` binary
+1. Check your internet connection and try again.
+2. Set `PDFIUM_LIB_PATH=/path/to/libpdfium` to point to an existing copy.
+3. Override the cache directory with `PDFIUM_AUTO_CACHE_DIR=/your/dir`.
 
 ### "No LLM provider could be auto-detected"
 
@@ -197,7 +101,18 @@ Your API key is invalid or expired. Generate a new one from your provider's dash
 
 ### macOS: "dyld: Library not loaded"
 
-You need to set the dynamic library path:
+This should not happen with v0.3.0+ because pdfium is loaded from its absolute cached path
+(`~/.cache/pdf2md/pdfium-7690/libpdfium.dylib`). If you see this with an older version:
 ```bash
-export DYLD_LIBRARY_PATH="/path/to/directory/with/libpdfium.dylib"
+export PDFIUM_LIB_PATH="~/.cache/pdf2md/pdfium-7690/libpdfium.dylib"
 ```
+
+### Using an existing pdfium installation
+
+To skip the auto-download and use a library already on your system:
+```bash
+export PDFIUM_LIB_PATH="/usr/local/lib/libpdfium.dylib"  # macOS
+export PDFIUM_LIB_PATH="/usr/local/lib/libpdfium.so"     # Linux
+```
+
+This also accepts the path from the legacy `./scripts/setup-pdfium.sh` script.

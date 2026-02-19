@@ -239,13 +239,16 @@ ENVIRONMENT VARIABLES:
   GEMINI_API_KEY          Google Gemini API key
   EDGEQUAKE_LLM_PROVIDER  Override provider (openai, anthropic, gemini, ollama)
   EDGEQUAKE_MODEL         Override model ID
-  DYLD_LIBRARY_PATH       macOS: path to libpdfium.dylib
-  LD_LIBRARY_PATH         Linux: path to libpdfium.so
+  PDFIUM_LIB_PATH         Path to an existing libpdfium — skips auto-download
+  PDFIUM_AUTO_CACHE_DIR   Override the default pdfium cache directory
 
 SETUP:
-  1. Install pdfium:  ./scripts/setup-pdfium.sh
-  2. Set API key:     export OPENAI_API_KEY=sk-...
-  3. Convert:         pdf2md document.pdf -o output.md
+  1. Set API key:     export OPENAI_API_KEY=sk-...
+  2. Convert:         pdf2md document.pdf -o output.md
+
+  PDFium (~30 MB) is downloaded automatically on first run and cached in
+  ~/.cache/pdf2md/pdfium-7690/. No manual library setup is required.
+  To use an existing pdfium copy: PDFIUM_LIB_PATH=/path/to/libpdfium pdf2md ...
 "#;
 
 /// Convert PDF files and URLs to Markdown using Vision LLMs.
@@ -406,6 +409,54 @@ async fn main() -> Result<()> {
         )
         .with_writer(io::stderr)
         .init();
+
+    // ── Ensure PDFium engine is available ───────────────────────────────────
+    // On the very first run (or after the cache is cleared), pdf2md downloads
+    // the PDFium library (~30 MB) from bblanchon/pdfium-binaries to
+    //   ~/.cache/pdf2md/pdfium-{VERSION}/
+    // Subsequent startups skip this block entirely (instant path check only).
+    if !pdfium_auto::is_pdfium_cached() {
+        if !cli.quiet {
+            let dl_bar = ProgressBar::new(0);
+            dl_bar.set_style(
+                ProgressStyle::with_template(
+                    "{spinner:.cyan} {prefix:.bold}  \
+                     [{bar:42.green/238}] {bytes}/{total_bytes}  ETA {eta_precise}",
+                )
+                .unwrap_or_else(|_| ProgressStyle::default_bar())
+                .progress_chars("█▉▊▋▌▍▎▏  ")
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "⠿"]),
+            );
+            dl_bar.set_prefix("PDF engine");
+            dl_bar.set_message("Connecting…");
+            dl_bar.enable_steady_tick(Duration::from_millis(80));
+
+            let bar = dl_bar.clone();
+            // block_in_place keeps the reference lifetime valid (no 'static
+            // requirement) while still offloading the blocking download from
+            // the async executor's hot path.
+            tokio::task::block_in_place(|| {
+                pdfium_auto::ensure_pdfium_library(Some(&|downloaded, total| {
+                    if let Some(t) = total {
+                        if bar.length().unwrap_or(0) != t {
+                            bar.set_length(t);
+                            bar.set_prefix("PDF engine");
+                        }
+                        bar.set_position(downloaded);
+                    } else {
+                        bar.set_position(downloaded);
+                    }
+                }))
+            })
+            .context("Failed to download PDFium engine")?;
+
+            dl_bar.finish_with_message("ready ✓");
+        } else {
+            // Quiet mode — download silently; errors still propagate.
+            tokio::task::block_in_place(|| pdfium_auto::ensure_pdfium_library(None))
+                .context("Failed to download PDFium engine")?;
+        }
+    }
 
     // ── Inspect-only mode ────────────────────────────────────────────────
     if cli.inspect_only {

@@ -1,0 +1,28 @@
+[package]
+name         = "pdfium-auto"
+version      = "0.1.0"
+edition      = "2021"
+rust-version = "1.88"
+description  = "Auto-download and cache PDFium binaries — zero-friction setup for pdfium-render"
+license      = "MIT OR Apache-2.0"
+repository   = "https://github.com/raphaelmansuy/edgequake-pdf2md"
+keywords     = ["pdf", "pdfium", "rendering", "download", "setup"]
+categories   = ["external-ffi-bindings", "rendering", "command-line-utilities"]
+readme       = "README.md"
+
+[dependencies]
+# Re-export the pdfium-render Pdfium struct for callers
+pdfium-render = { version = "0.8", features = ["pdfium_latest", "image_latest", "thread_safe"] }
+
+# HTTP download  (blocking – used inside spawn_blocking / sync contexts)
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+
+# Archive extraction
+flate2       = "1"
+tar          = "0"
+
+# Error handling
+thiserror    = "2"
+
+# Platform-specific cache directories
+dirs         = "5"
