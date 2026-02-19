@@ -6,12 +6,185 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use edgequake_pdf2md::{
-    convert, convert_to_file, inspect, ConversionConfig, FidelityTier, PageSelection, PageSeparator,
+    convert, convert_to_file, inspect, ConversionConfig, ConversionProgressCallback, FidelityTier,
+    PageSelection, PageSeparator, ProgressCallback,
 };
-// use indicatif::{ProgressBar, ProgressStyle}; // TODO: add progress bar
+use indicatif::{ProgressBar, ProgressStyle};
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tracing_subscriber::EnvFilter;
+
+// ── ANSI colour helpers (no extra deps) ──────────────────────────────────────
+
+fn green(s: &str) -> String {
+    format!("\x1b[32m{s}\x1b[0m")
+}
+fn red(s: &str) -> String {
+    format!("\x1b[31m{s}\x1b[0m")
+}
+fn dim(s: &str) -> String {
+    format!("\x1b[2m{s}\x1b[0m")
+}
+fn bold(s: &str) -> String {
+    format!("\x1b[1m{s}\x1b[0m")
+}
+fn cyan(s: &str) -> String {
+    format!("\x1b[36m{s}\x1b[0m")
+}
+
+// ── CLI progress callback using indicatif ────────────────────────────────────
+
+/// Terminal progress callback: renders a live progress bar and per-page log
+/// lines using [indicatif]. Designed to work correctly when pages complete
+/// out-of-order (concurrent mode).
+struct CliProgressCallback {
+    /// The single progress bar anchored at the bottom of the terminal.
+    bar: ProgressBar,
+    /// Per-page wall-clock start times for elapsed reporting.
+    start_times: Mutex<HashMap<usize, Instant>>,
+    /// Count of pages that errored out.
+    errors: AtomicUsize,
+}
+
+impl CliProgressCallback {
+    /// Create a callback whose progress-bar length is set dynamically
+    /// by `on_conversion_start` (called before any pages are processed).
+    fn new_dynamic() -> Arc<Self> {
+        let bar = ProgressBar::new(0); // length set in on_conversion_start
+
+        // Initial style: spinner only (no counter until we know the total).
+        let spinner_style = ProgressStyle::with_template("{spinner:.cyan} {prefix:.bold}  {msg}")
+            .unwrap_or_else(|_| ProgressStyle::default_spinner())
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "⠿"]);
+
+        bar.set_style(spinner_style);
+        bar.set_prefix("Preparing");
+        bar.set_message("Opening PDF…");
+        bar.enable_steady_tick(Duration::from_millis(80));
+
+        Arc::new(Self {
+            bar,
+            start_times: Mutex::new(HashMap::new()),
+            errors: AtomicUsize::new(0),
+        })
+    }
+
+    /// Switch to the full progress-bar style once we know `total`.
+    fn activate_bar(&self, total: usize) {
+        let progress_style = ProgressStyle::with_template(
+            "{spinner:.cyan} {prefix:.bold}  \
+             [{bar:42.green/238}] {pos:>3}/{len} pages  \
+             ⏱ {elapsed_precise}  ETA {eta_precise}",
+        )
+        .unwrap_or_else(|_| ProgressStyle::default_bar())
+        .progress_chars("█▉▊▋▌▍▎▏  ")
+        .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "⠿"]);
+
+        self.bar.set_length(total as u64);
+        self.bar.set_style(progress_style);
+        self.bar.set_prefix("Converting");
+        self.bar.reset_eta();
+    }
+}
+
+impl ConversionProgressCallback for CliProgressCallback {
+    fn on_conversion_start(&self, total_pages: usize) {
+        // Switch from spinner-only style to full progress bar now that we
+        // know the actual page count.
+        self.activate_bar(total_pages);
+        self.bar.println(format!(
+            "{} {}",
+            cyan("◆"),
+            bold(&format!("Starting conversion of {total_pages} pages…"))
+        ));
+    }
+
+    fn on_page_start(&self, page_num: usize, _total: usize) {
+        self.start_times
+            .lock()
+            .unwrap()
+            .insert(page_num, Instant::now());
+        self.bar.set_message(format!("page {page_num}"));
+    }
+
+    fn on_page_complete(&self, page_num: usize, total: usize, markdown_len: usize) {
+        let elapsed_ms = self
+            .start_times
+            .lock()
+            .unwrap()
+            .remove(&page_num)
+            .map(|t| t.elapsed().as_millis())
+            .unwrap_or(0);
+
+        self.bar.println(format!(
+            "  {} Page {:>3}/{:<3}  {:<8}  {}",
+            green("✓"),
+            page_num,
+            total,
+            dim(&format!("{markdown_len:>5} chars")),
+            dim(&format!("{:.1}s", elapsed_ms as f64 / 1000.0)),
+        ));
+        self.bar.inc(1);
+    }
+
+    fn on_page_error(&self, page_num: usize, total: usize, error: &str) {
+        let elapsed_ms = self
+            .start_times
+            .lock()
+            .unwrap()
+            .remove(&page_num)
+            .map(|t| t.elapsed().as_millis())
+            .unwrap_or(0);
+
+        self.errors.fetch_add(1, Ordering::SeqCst);
+
+        // Truncate very long error messages to keep output tidy.
+        let msg = if error.len() > 80 {
+            format!("{}…", &error[..79])
+        } else {
+            error.to_string()
+        };
+
+        self.bar.println(format!(
+            "  {} Page {:>3}/{:<3}  {}  {}",
+            red("✗"),
+            page_num,
+            total,
+            red(&msg),
+            dim(&format!("{:.1}s", elapsed_ms as f64 / 1000.0)),
+        ));
+        self.bar.inc(1);
+    }
+
+    fn on_conversion_complete(&self, total_pages: usize, success_count: usize) {
+        let failed = total_pages.saturating_sub(success_count);
+        self.bar.finish_and_clear();
+
+        if failed == 0 {
+            eprintln!(
+                "{} {} pages converted successfully",
+                green("✔"),
+                bold(&success_count.to_string())
+            );
+        } else {
+            eprintln!(
+                "{} {}/{} pages converted  ({} failed)",
+                if failed == total_pages {
+                    red("✘")
+                } else {
+                    cyan("⚠")
+                },
+                bold(&success_count.to_string()),
+                total_pages,
+                red(&failed.to_string()),
+            );
+        }
+    }
+}
 
 const AFTER_HELP: &str = r#"EXAMPLES:
   # Basic conversion (stdout)
@@ -214,13 +387,18 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // ── Logging setup ────────────────────────────────────────────────────
-    let filter = if cli.quiet {
+    // Suppress INFO-level library logs when the progress bar is active;
+    // the bar provides all the feedback that matters to the user.
+    let show_progress = !cli.quiet && !cli.no_progress && !cli.json;
+    let filter = if cli.quiet || show_progress {
         "error"
     } else if cli.verbose {
         "debug"
     } else {
         "info"
     };
+    // In verbose mode we always want all logs regardless of progress.
+    let filter = if cli.verbose { "debug" } else { filter };
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -263,7 +441,18 @@ async fn main() -> Result<()> {
     }
 
     // ── Build config ─────────────────────────────────────────────────────
-    let config = build_config(&cli).await?;
+    // The progress bar is initialised with a spinner (no page count yet);
+    // `on_conversion_start` resizes it to the correct total once the PDF
+    // has been inspected. `show_progress` was already computed above.
+
+    let progress_cb: Option<ProgressCallback> = if show_progress {
+        let cb = CliProgressCallback::new_dynamic();
+        Some(cb as Arc<dyn ConversionProgressCallback>)
+    } else {
+        None
+    };
+
+    let config = build_config(&cli, progress_cb).await?;
 
     // ── Run conversion ───────────────────────────────────────────────────
     if let Some(ref output_path) = cli.output {
@@ -271,20 +460,25 @@ async fn main() -> Result<()> {
             .await
             .context("Conversion failed")?;
 
+        // Summary line (callback already printed the per-page log).
         if !cli.quiet {
+            let selected = stats.processed_pages + stats.failed_pages + stats.skipped_pages;
             eprintln!(
-                "Converted {}/{} pages in {}ms → {}",
+                "{}  {}/{} pages  {}ms  →  {}",
+                if stats.failed_pages == 0 {
+                    green("✔")
+                } else {
+                    cyan("⚠")
+                },
                 stats.processed_pages,
-                stats.total_pages,
+                selected,
                 stats.total_duration_ms,
-                output_path.display()
+                bold(&output_path.display().to_string()),
             );
-            if stats.failed_pages > 0 {
-                eprintln!("  {} pages failed", stats.failed_pages);
-            }
             eprintln!(
-                "  Tokens: {} input, {} output",
-                stats.total_input_tokens, stats.total_output_tokens
+                "   {} tokens in  /  {} tokens out",
+                dim(&stats.total_input_tokens.to_string()),
+                dim(&stats.total_output_tokens.to_string()),
             );
         }
     } else {
@@ -295,25 +489,39 @@ async fn main() -> Result<()> {
         if cli.json {
             let json =
                 serde_json::to_string_pretty(&output).context("Failed to serialise output")?;
-            println!("{}", json);
+            println!("{json}");
         } else {
             let stdout = io::stdout();
             let mut handle = stdout.lock();
             handle
                 .write_all(output.markdown.as_bytes())
                 .context("Failed to write to stdout")?;
+            // Ensure a trailing newline on stdout.
+            if !output.markdown.ends_with('\n') {
+                handle.write_all(b"\n").ok();
+            }
         }
 
-        if !cli.quiet {
+        // Summary (the callback already printed the final green/red tick).
+        if !cli.quiet && !show_progress {
+            // Only print inline stats when the progress callback is disabled.
+            let selected = output.stats.processed_pages
+                + output.stats.failed_pages
+                + output.stats.skipped_pages;
             eprintln!(
                 "Converted {}/{} pages in {}ms",
-                output.stats.processed_pages,
-                output.stats.total_pages,
-                output.stats.total_duration_ms
+                output.stats.processed_pages, selected, output.stats.total_duration_ms
             );
             if output.stats.failed_pages > 0 {
                 eprintln!("  {} pages failed", output.stats.failed_pages);
             }
+        } else if !cli.quiet && !cli.json {
+            eprintln!(
+                "   {} tokens in  /  {} tokens out  —  {}ms total",
+                dim(&output.stats.total_input_tokens.to_string()),
+                dim(&output.stats.total_output_tokens.to_string()),
+                output.stats.total_duration_ms,
+            );
         }
     }
 
@@ -321,7 +529,7 @@ async fn main() -> Result<()> {
 }
 
 /// Map CLI args to `ConversionConfig`.
-async fn build_config(cli: &Cli) -> Result<ConversionConfig> {
+async fn build_config(cli: &Cli, progress: Option<ProgressCallback>) -> Result<ConversionConfig> {
     let system_prompt = if let Some(ref path) = cli.system_prompt {
         Some(
             tokio::fs::read_to_string(path)
@@ -335,7 +543,7 @@ async fn build_config(cli: &Cli) -> Result<ConversionConfig> {
     let pages = parse_pages(&cli.pages)?;
     let separator = parse_separator(&cli.separator);
 
-    let config = ConversionConfig::builder()
+    let mut builder = ConversionConfig::builder()
         .dpi(cli.dpi)
         .concurrency(cli.concurrency)
         .maintain_format(cli.maintain_format)
@@ -347,12 +555,15 @@ async fn build_config(cli: &Cli) -> Result<ConversionConfig> {
         .max_retries(cli.max_retries)
         .include_metadata(cli.metadata)
         .download_timeout_secs(cli.download_timeout)
-        .api_timeout_secs(cli.api_timeout)
-        .build()
-        .context("Invalid configuration")?;
+        .api_timeout_secs(cli.api_timeout);
+
+    if let Some(cb) = progress {
+        builder = builder.progress_callback(cb);
+    }
+
+    let mut config = builder.build().context("Invalid configuration")?;
 
     // Apply fields the builder doesn't have setters for (or that need special handling)
-    let mut config = config;
     config.model = cli.model.clone();
     config.provider_name = cli.provider.clone();
     config.password = cli.password.clone();

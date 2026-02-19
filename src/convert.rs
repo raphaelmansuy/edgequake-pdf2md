@@ -57,11 +57,6 @@ pub async fn convert(
     let total_pages = metadata.page_count;
     info!("PDF has {} pages", total_pages);
 
-    // Fire on_conversion_start
-    if let Some(ref cb) = config.progress_callback {
-        cb.on_conversion_start(total_pages);
-    }
-
     // ── Step 4: Compute page indices ─────────────────────────────────────
     let page_indices = config.pages.to_indices(total_pages);
     if page_indices.is_empty() {
@@ -71,6 +66,12 @@ pub async fn convert(
         });
     }
     debug!("Selected {} pages for conversion", page_indices.len());
+
+    // Fire on_conversion_start now that we know how many pages will actually
+    // be converted (page_indices.len()), not the full document page count.
+    if let Some(ref cb) = config.progress_callback {
+        cb.on_conversion_start(page_indices.len());
+    }
 
     // ── Step 5: Rasterise pages ──────────────────────────────────────────
     let render_start = Instant::now();
@@ -163,9 +164,10 @@ pub async fn convert(
         processed, total_pages, stats.total_duration_ms
     );
 
-    // Fire on_conversion_complete
+    // Fire on_conversion_complete with the count of selected pages, not the
+    // full PDF page count, to match what on_conversion_start received.
     if let Some(ref cb) = config.progress_callback {
-        cb.on_conversion_complete(total_pages, processed);
+        cb.on_conversion_complete(page_indices.len(), processed);
     }
 
     Ok(ConversionOutput {

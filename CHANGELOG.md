@@ -11,6 +11,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.1] — 2026-02-19
+
+### Added
+
+#### CLI — Rich terminal progress bar (`src/bin/pdf2md.rs`)
+
+The `pdf2md` CLI now wires the `ConversionProgressCallback` API into a live
+[indicatif](https://github.com/console-rs/indicatif) progress bar and per-page
+log lines, giving users real-time feedback on long conversions.
+
+**UX flow:**
+
+1. **Spinner phase** — while the PDF is being opened and inspected: `⠹ Preparing  Opening PDF…`
+2. **Bar phase** — once the page count is known, the spinner transitions to a full progress bar:
+   ```
+   ⠙ Converting  [████████████████░░░░░░░░░░░░] 12/20 pages  ⏱ 00:00:45  ETA 00:00:15
+   ```
+3. **Per-page log lines** scroll above the bar as each page completes:
+   ```
+     ✓ Page   3/20     2 894 chars  7.3s
+     ✗ Page   7/20   API timeout                                        8.0s
+   ```
+4. **Completion summary** once all pages are done:
+   ```
+   ✔ 19 pages converted successfully
+   ✔  19/20 pages  52 341ms  →  output.md
+      72 191 tokens in  /  15 882 tokens out
+   ```
+
+**Key design decisions:**
+- Tracing `INFO` logs are suppressed when the progress bar is active (they'd overwrite the bar). Use `--verbose` to re-enable them.
+- `--no-progress` disables the bar and falls back to plain `INFO`-level tracing output.
+- `--quiet` suppresses all output (including the bar) — useful in CI and shell pipelines.
+- `--json` implies no progress bar (JSON is written to stdout; progress would corrupt it).
+- All ANSI colour codes use raw escape sequences — no additional dependencies.
+
+**Fixed:**
+- `on_conversion_start` now fires with the count of selected pages (`page_indices.len()`), not the full PDF page count. Previously a `--pages 1-3` run on a 100-page PDF would show `3/100 pages` instead of `3/3`.
+- Summary lines (`✔  X/Y pages`) use `processed + failed + skipped` as the denominator, so `--pages 1-3` always shows `3/3`, not the raw PDF total.
+
+---
+
 ## [0.2.0] — 2026-05-28
 
 ### Added
