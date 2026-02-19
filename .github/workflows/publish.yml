@@ -121,6 +121,8 @@ jobs:
     name: Publish to crates.io
     runs-on: ubuntu-latest
     needs: pre-publish-checks
+    permissions:
+      contents: write   # required for softprops/action-gh-release to create releases
     steps:
       - uses: actions/checkout@v4
 
