@@ -1,0 +1,37 @@
+{
+  "markdown": "# Anatomy of the Somatosensory System\n\n**From Wikibooks¹**\n\nOur somatosensory system consists of sensors in the skin and sensors in our muscles, tendons, and joints. The receptors in the skin, the so-called cutaneous receptors, tell us about temperature (*thermoreceptors*), pressure and surface texture (*mechanoreceptors*), and pain (*nociceptors*). The receptors in muscles and joints provide information about muscle length, muscle tension, and joint angles.\n\n## Cutaneous receptors\n\nSensory information from *Meissner corpuscles* and rapidly adapting afferents leads to adjustment of grip force when objects are lifted. These afferents respond with a brief burst of action potentials when objects move a small distance during the early stages of lifting. In response to\n\n![Receptors in the human skin](image.png)\n\n*Figure 1: Receptors in the human skin: Mechanoreceptors can be free receptors or encapsulated. Examples for free receptors are the hair receptors at the roots of hairs. Encapsulated receptors are the Pacinian corpuscles and the receptors in the glabrous (hairless) skin: Meissner corpuscles, Ruffini corpuscles and Merkel’s disks.*\n\n---\n\n¹ The following description is based on lecture notes from Laszlo Zaborszky, from Rutgers University.\n",
+  "pages": [
+    {
+      "page_num": 1,
+      "markdown": "# Anatomy of the Somatosensory System\n\n**From Wikibooks¹**\n\nOur somatosensory system consists of sensors in the skin and sensors in our muscles, tendons, and joints. The receptors in the skin, the so-called cutaneous receptors, tell us about temperature (*thermoreceptors*), pressure and surface texture (*mechanoreceptors*), and pain (*nociceptors*). The receptors in muscles and joints provide information about muscle length, muscle tension, and joint angles.\n\n## Cutaneous receptors\n\nSensory information from *Meissner corpuscles* and rapidly adapting afferents leads to adjustment of grip force when objects are lifted. These afferents respond with a brief burst of action potentials when objects move a small distance during the early stages of lifting. In response to\n\n![Receptors in the human skin](image.png)\n\n*Figure 1: Receptors in the human skin: Mechanoreceptors can be free receptors or encapsulated. Examples for free receptors are the hair receptors at the roots of hairs. Encapsulated receptors are the Pacinian corpuscles and the receptors in the glabrous (hairless) skin: Meissner corpuscles, Ruffini corpuscles and Merkel’s disks.*\n\n---\n\n¹ The following description is based on lecture notes from Laszlo Zaborszky, from Rutgers University.\n",
+      "input_tokens": 1130,
+      "output_tokens": 273,
+      "duration_ms": 8630,
+      "retries": 0,
+      "error": null
+    }
+  ],
+  "metadata": {
+    "title": "Anatomy of the Somatosensory System",
+    "author": null,
+    "subject": null,
+    "creator": null,
+    "producer": "Prince 20150210 (www.princexml.com)",
+    "creation_date": null,
+    "modification_date": null,
+    "page_count": 4,
+    "pdf_version": "Pdf1_4",
+    "is_encrypted": false
+  },
+  "stats": {
+    "total_pages": 4,
+    "processed_pages": 1,
+    "failed_pages": 0,
+    "skipped_pages": 0,
+    "total_input_tokens": 1130,
+    "total_output_tokens": 273,
+    "total_duration_ms": 10045,
+    "render_duration_ms": 9,
+    "llm_duration_ms": 8630
+  }
+}

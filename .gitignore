@@ -1,0 +1,27 @@
+# Rust build and dependency files
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE and editor files
+/.idea/
+*.swp
+*.swo
+*.bak
+*.tmp
+*.vscode/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# By user request: ignore zz-explore/
+zz-explore/
+
+# Platform-specific pdfium binaries (downloaded at runtime via setup-pdfium.sh)
+libpdfium.dylib
+libpdfium.so
+pdfium.dll
+
+# Runtime logs
+logs/
