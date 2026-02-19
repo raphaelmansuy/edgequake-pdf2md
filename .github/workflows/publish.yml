@@ -78,6 +78,9 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
       # 6. Security audit
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
       - name: Security audit
         run: cargo audit
 
