@@ -11,6 +11,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.1] — 2026-02-19
+
+### Added
+
+- **`bundled` feature** — embed the pdfium shared library inside the binary at
+  compile time, producing a single self-contained executable with no runtime
+  dependencies (no internet download, no pre-installed library).
+  Build with `PDFIUM_BUNDLE_LIB=/path/to/libpdfium.dylib cargo build --release --features bundled`.
+  Supported on macOS arm64/x86_64, Linux x86_64/aarch64, Windows x86_64/aarch64/x86.
+
+### Fixed
+
+- **OpenAI-first provider selection** — when multiple API keys are available
+  (`OPENAI_API_KEY`, `GEMINI_API_KEY`, etc.), `gpt-4.1-nano` is now selected by
+  default instead of Gemini, matching the documented behaviour.
+
+### Changed
+
+- CI now uses `--features cli` instead of `--all-features` (the `bundled`
+  feature requires `PDFIUM_BUNDLE_LIB` at compile time and cannot run
+  unattended in CI).
+
+---
+
 ## [0.3.0] — 2025-06-06
 
 ### Added
