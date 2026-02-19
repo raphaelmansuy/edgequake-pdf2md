@@ -23,5 +23,9 @@ libpdfium.dylib
 libpdfium.so
 pdfium.dll
 
+# CI-downloaded pdfium library directory and temp archive
+pdfium-lib/
+pdfium.tgz
+
 # Runtime logs
 logs/
