@@ -106,12 +106,12 @@ fn ensure_final_newline(input: &str) -> String {
 
 // ── Rule 6: Normalise heading spacing ────────────────────────────────────────
 
-
 fn normalise_heading_spacing(input: &str) -> String {
     // Ensure a blank line before each heading (unless at the very start)
     let mut result = String::with_capacity(input.len() + 64);
     for (i, line) in input.lines().enumerate() {
-        let is_heading = line.starts_with('#') && line.chars().nth(line.find(' ').unwrap_or(0)).is_some();
+        let is_heading =
+            line.starts_with('#') && line.chars().nth(line.find(' ').unwrap_or(0)).is_some();
         if is_heading && i > 0 {
             // Remove any single trailing newline and ensure double
             let trimmed = result.trim_end_matches('\n');
@@ -181,7 +181,9 @@ fn is_separator_row(line: &str) -> bool {
 
 fn remove_invisible_chars(input: &str) -> String {
     input.replace(
-        ['\u{200B}', '\u{FEFF}', '\u{00AD}', '\u{200C}', '\u{200D}', '\u{2060}'],
+        [
+            '\u{200B}', '\u{FEFF}', '\u{00AD}', '\u{200C}', '\u{200D}', '\u{2060}',
+        ],
         "",
     )
 }
@@ -197,9 +199,7 @@ fn remove_invisible_chars(input: &str) -> String {
 // `https://` AND the host is not a known placeholder domain. Otherwise convert
 // to `*alt*` (italic caption) so the text is not lost.
 
-static RE_IMAGE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"!\[([^\]]*)\]\(([^)]*)\)").unwrap()
-});
+static RE_IMAGE: Lazy<Regex> = Lazy::new(|| Regex::new(r"!\[([^\]]*)\]\(([^)]*)\)").unwrap());
 
 /// List of URL patterns that indicate a fabricated/placeholder image link.
 fn is_placeholder_url(url: &str) -> bool {
@@ -225,21 +225,23 @@ fn is_placeholder_url(url: &str) -> bool {
 }
 
 fn remove_hallucinated_images(input: &str) -> String {
-    RE_IMAGE.replace_all(input, |caps: &regex::Captures<'_>| {
-        let alt = caps[1].trim();
-        let url = &caps[2];
-        if is_placeholder_url(url) {
-            // Replace with just an italic caption (preserve the description text)
-            if alt.is_empty() {
-                String::new()
+    RE_IMAGE
+        .replace_all(input, |caps: &regex::Captures<'_>| {
+            let alt = caps[1].trim();
+            let url = &caps[2];
+            if is_placeholder_url(url) {
+                // Replace with just an italic caption (preserve the description text)
+                if alt.is_empty() {
+                    String::new()
+                } else {
+                    format!("*{}*", alt)
+                }
             } else {
-                format!("*{}*", alt)
+                // Keep real image links as-is
+                caps[0].to_string()
             }
-        } else {
-            // Keep real image links as-is
-            caps[0].to_string()
-        }
-    }).to_string()
+        })
+        .to_string()
 }
 
 // ── Rule 10: Remove spurious mid-table separator rows ───────────────────────
@@ -313,7 +315,10 @@ mod tests {
 
     #[test]
     fn test_trim_trailing_whitespace() {
-        assert_eq!(trim_trailing_whitespace("  hello   \nworld  "), "  hello\nworld");
+        assert_eq!(
+            trim_trailing_whitespace("  hello   \nworld  "),
+            "  hello\nworld"
+        );
     }
 
     #[test]
@@ -364,8 +369,14 @@ mod tests {
     fn test_remove_hallucinated_image_placeholder_url() {
         let input = "Some text\n![Chart Title](chart.png)\nMore text";
         let result = remove_hallucinated_images(input);
-        assert!(!result.contains("!["), "Should remove image with local path");
-        assert!(result.contains("*Chart Title*"), "Should keep alt text as italic");
+        assert!(
+            !result.contains("!["),
+            "Should remove image with local path"
+        );
+        assert!(
+            result.contains("*Chart Title*"),
+            "Should keep alt text as italic"
+        );
     }
 
     #[test]

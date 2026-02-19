@@ -71,13 +71,17 @@ pub mod convert;
 pub mod error;
 pub mod output;
 pub mod pipeline;
+pub mod progress;
 pub mod prompts;
 pub mod stream;
 
 // ── Re-exports ───────────────────────────────────────────────────────────
 
-pub use config::{ConversionConfig, ConversionConfigBuilder, FidelityTier, PageSelection, PageSeparator};
-pub use convert::{convert, convert_sync, convert_to_file, inspect};
+pub use config::{
+    ConversionConfig, ConversionConfigBuilder, FidelityTier, PageSelection, PageSeparator,
+};
+pub use convert::{convert, convert_from_bytes, convert_sync, convert_to_file, inspect};
 pub use error::{PageError, Pdf2MdError};
 pub use output::{ConversionOutput, ConversionStats, DocumentMetadata, PageResult};
-pub use stream::convert_stream;
+pub use progress::{ConversionProgressCallback, NoopProgressCallback, ProgressCallback};
+pub use stream::{convert_stream, convert_stream_from_bytes};

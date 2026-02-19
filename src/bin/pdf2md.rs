@@ -6,8 +6,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use edgequake_pdf2md::{
-    convert, convert_to_file, inspect, ConversionConfig, FidelityTier, PageSelection,
-    PageSeparator,
+    convert, convert_to_file, inspect, ConversionConfig, FidelityTier, PageSelection, PageSeparator,
 };
 // use indicatif::{ProgressBar, ProgressStyle}; // TODO: add progress bar
 use std::io::{self, Write};
@@ -98,15 +97,21 @@ struct Cli {
     output: Option<PathBuf>,
 
     /// LLM model ID (e.g. gpt-4.1-nano, gpt-4.1, claude-sonnet-4-20250514).
-    #[arg(long, env = "EDGEQUAKE_MODEL",
-          long_help = "Vision LLM model to use. Default: gpt-4.1-nano ($0.10/$0.40 per 1M tokens).\n\
-          Popular choices: gpt-4.1-mini ($0.40/$1.60), gpt-4.1 ($2/$8), claude-sonnet-4-20250514 ($3/$15).")]
+    #[arg(
+        long,
+        env = "EDGEQUAKE_MODEL",
+        long_help = "Vision LLM model to use. Default: gpt-4.1-nano ($0.10/$0.40 per 1M tokens).\n\
+          Popular choices: gpt-4.1-mini ($0.40/$1.60), gpt-4.1 ($2/$8), claude-sonnet-4-20250514 ($3/$15)."
+    )]
     model: Option<String>,
 
     /// LLM provider: openai, anthropic, gemini, ollama, azure.
-    #[arg(long, env = "EDGEQUAKE_PROVIDER",
-          long_help = "LLM provider. Auto-detected from API key env vars if not set.\n\
-          Supported: openai, anthropic, gemini, azure, ollama, or any OpenAI-compatible URL.")]
+    #[arg(
+        long,
+        env = "EDGEQUAKE_PROVIDER",
+        long_help = "LLM provider. Auto-detected from API key env vars if not set.\n\
+          Supported: openai, anthropic, gemini, azure, ollama, or any OpenAI-compatible URL."
+    )]
     provider: Option<String>,
 
     /// Rendering DPI (72–400).
@@ -226,9 +231,7 @@ async fn main() -> Result<()> {
 
     // ── Inspect-only mode ────────────────────────────────────────────────
     if cli.inspect_only {
-        let meta = inspect(&cli.input)
-            .await
-            .context("Failed to inspect PDF")?;
+        let meta = inspect(&cli.input).await.context("Failed to inspect PDF")?;
 
         if cli.json {
             println!(
@@ -290,8 +293,8 @@ async fn main() -> Result<()> {
             .context("Conversion failed")?;
 
         if cli.json {
-            let json = serde_json::to_string_pretty(&output)
-                .context("Failed to serialise output")?;
+            let json =
+                serde_json::to_string_pretty(&output).context("Failed to serialise output")?;
             println!("{}", json);
         } else {
             let stdout = io::stdout();

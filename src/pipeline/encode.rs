@@ -40,11 +40,7 @@ mod tests {
 
     #[test]
     fn encode_small_image() {
-        let img = DynamicImage::ImageRgba8(RgbaImage::from_pixel(
-            10,
-            10,
-            Rgba([255, 0, 0, 255]),
-        ));
+        let img = DynamicImage::ImageRgba8(RgbaImage::from_pixel(10, 10, Rgba([255, 0, 0, 255])));
         let data = encode_page(&img).expect("encode should succeed");
         assert_eq!(data.mime_type, "image/png");
         assert!(!data.data.is_empty());

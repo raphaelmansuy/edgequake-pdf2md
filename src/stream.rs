@@ -17,6 +17,7 @@ use crate::output::PageResult;
 use crate::pipeline::{encode, input, llm, postprocess, render};
 use edgequake_llm::{LLMProvider, ProviderFactory};
 use futures::stream::{self, StreamExt};
+use std::io::Write;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio_stream::Stream;
@@ -66,13 +67,11 @@ pub async fn convert_stream(
     // ── Encode images ────────────────────────────────────────────────────
     let encoded: Vec<(usize, edgequake_llm::ImageData)> = rendered
         .iter()
-        .filter_map(|(idx, img)| {
-            match encode::encode_page(img) {
-                Ok(data) => Some((*idx, data)),
-                Err(e) => {
-                    warn!("Failed to encode page {}: {}", idx + 1, e);
-                    None
-                }
+        .filter_map(|(idx, img)| match encode::encode_page(img) {
+            Ok(data) => Some((*idx, data)),
+            Err(e) => {
+                warn!("Failed to encode page {}: {}", idx + 1, e);
+                None
             }
         })
         .collect();
@@ -83,23 +82,21 @@ pub async fn convert_stream(
 
     if config.maintain_format {
         // Sequential mode: must process in order
-        let s = stream::iter(encoded.into_iter())
-            .then(move |(idx, img_data)| {
-                let provider = Arc::clone(&provider);
-                let cfg = config_clone.clone();
-                async move {
-                    let page_num = idx + 1;
-                    let mut result =
-                        llm::process_page(&provider, page_num, img_data, None, &cfg).await;
-                    if result.error.is_none() {
-                        result.markdown = postprocess::clean_markdown(&result.markdown);
-                        Ok(result)
-                    } else {
-                        let err = result.error.take().unwrap();
-                        Err(err)
-                    }
+        let s = stream::iter(encoded.into_iter()).then(move |(idx, img_data)| {
+            let provider = Arc::clone(&provider);
+            let cfg = config_clone.clone();
+            async move {
+                let page_num = idx + 1;
+                let mut result = llm::process_page(&provider, page_num, img_data, None, &cfg).await;
+                if result.error.is_none() {
+                    result.markdown = postprocess::clean_markdown(&result.markdown);
+                    Ok(result)
+                } else {
+                    let err = result.error.take().unwrap();
+                    Err(err)
                 }
-            });
+            }
+        });
 
         Ok(Box::pin(s))
     } else {
@@ -109,8 +106,7 @@ pub async fn convert_stream(
             let cfg = config_clone.clone();
             async move {
                 let page_num = idx + 1;
-                let mut result =
-                    llm::process_page(&provider, page_num, img_data, None, &cfg).await;
+                let mut result = llm::process_page(&provider, page_num, img_data, None, &cfg).await;
                 if result.error.is_none() {
                     result.markdown = postprocess::clean_markdown(&result.markdown);
                     Ok(result)
@@ -120,11 +116,60 @@ pub async fn convert_stream(
                 }
             }
         }))
-        .buffer_unordered(concurrency)
-        ;
+        .buffer_unordered(concurrency);
 
         Ok(Box::pin(s))
     }
+}
+
+/// Convert PDF bytes in memory to Markdown, streaming pages as they complete.
+///
+/// This is the streaming equivalent of [`crate::convert::convert_from_bytes`].
+/// The PDF bytes are written to a temporary file internally; the file is cleaned
+/// up automatically when the returned stream (and all its futures) are dropped.
+///
+/// # Arguments
+/// * `bytes`  — Raw PDF bytes
+/// * `config` — Conversion configuration
+///
+/// # Returns
+/// - `Ok(PageStream)` — a stream of `Result<PageResult, PageError>`
+/// - `Err(Pdf2MdError)` — fatal error (not a PDF, provider not configured, etc.)
+///
+/// # Example
+/// ```rust,no_run
+/// use edgequake_pdf2md::{convert_stream_from_bytes, ConversionConfig};
+/// use futures::StreamExt;
+///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let bytes: Vec<u8> = std::fs::read("document.pdf")?;
+/// let config = ConversionConfig::default();
+/// let mut stream = convert_stream_from_bytes(&bytes, &config).await?;
+/// while let Some(page) = stream.next().await {
+///     match page {
+///         Ok(p) => println!("Page {}: {} chars", p.page_num, p.markdown.len()),
+///         Err(e) => eprintln!("Error: {e}"),
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+pub async fn convert_stream_from_bytes(
+    bytes: &[u8],
+    config: &ConversionConfig,
+) -> Result<PageStream, Pdf2MdError> {
+    let mut tmp = tempfile::NamedTempFile::new()
+        .map_err(|e| Pdf2MdError::Internal(format!("tempfile: {e}")))?;
+    tmp.write_all(bytes)
+        .map_err(|e| Pdf2MdError::Internal(format!("tempfile write: {e}")))?;
+    let path = tmp.path().to_string_lossy().to_string();
+    // Keep `tmp` alive for the duration of this call; the stream is fully
+    // materialised (pages rendered + encoded) before we return, so it is safe
+    // to drop the tempfile here.
+    let stream = convert_stream(&path, config).await?;
+    drop(tmp);
+    Ok(stream)
 }
 
 /// Resolve LLM provider from config.
@@ -148,12 +193,11 @@ fn resolve_provider(config: &ConversionConfig) -> Result<Arc<dyn LLMProvider>, P
         }
     }
 
-    let (llm_provider, _) = ProviderFactory::from_env().map_err(|e| {
-        Pdf2MdError::ProviderNotConfigured {
+    let (llm_provider, _) =
+        ProviderFactory::from_env().map_err(|e| Pdf2MdError::ProviderNotConfigured {
             provider: "auto".to_string(),
             hint: format!("No LLM provider auto-detected: {}", e),
-        }
-    })?;
+        })?;
 
     Ok(llm_provider)
 }

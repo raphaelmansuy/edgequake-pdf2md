@@ -24,7 +24,6 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum Pdf2MdError {
     // ── Input errors ──────────────────────────────────────────────────────
-
     /// Input file was not found at the given path.
     #[error("PDF file not found: '{path}'\nCheck the path exists and is readable.")]
     FileNotFound { path: PathBuf },
@@ -50,7 +49,6 @@ pub enum Pdf2MdError {
     NotAPdf { path: PathBuf, magic: [u8; 4] },
 
     // ── PDF errors ────────────────────────────────────────────────────────
-
     /// PDF header/trailer/xref is corrupt and cannot be parsed.
     #[error("PDF '{path}' is corrupt: {detail}\nTry repairing with: qpdf --decrypt input.pdf output.pdf")]
     CorruptPdf { path: PathBuf, detail: String },
@@ -72,7 +70,6 @@ pub enum Pdf2MdError {
     RasterisationFailed { page: usize, detail: String },
 
     // ── LLM errors ────────────────────────────────────────────────────────
-
     /// The configured provider is not initialised (missing API key etc.).
     #[error("LLM provider '{provider}' is not configured.\n{hint}")]
     ProviderNotConfigured { provider: String, hint: String },
@@ -89,8 +86,36 @@ pub enum Pdf2MdError {
         first_error: String,
     },
 
-    // ── I/O errors ────────────────────────────────────────────────────────
+    /// Some pages succeeded but at least one failed.
+    ///
+    /// Returned by [`crate::output::ConversionOutput::into_result`] when
+    /// the caller wants to treat any page failure as an error.
+    #[error("{failed}/{total} pages failed during conversion")]
+    PartialFailure {
+        success: usize,
+        failed: usize,
+        total: usize,
+    },
 
+    /// VLM API returned HTTP 429 — caller should back off.
+    ///
+    /// Check `retry_after_secs` for a server-specified delay, or use
+    /// exponential backoff if `None`.
+    #[error("Rate limit exceeded for provider '{provider}'")]
+    RateLimitExceeded {
+        provider: String,
+        retry_after_secs: Option<u64>,
+    },
+
+    /// VLM API call timed out — the caller may retry.
+    #[error("API call timed out after {elapsed_ms}ms on page {page}")]
+    ApiTimeout { page: usize, elapsed_ms: u64 },
+
+    /// VLM API returned an authentication error (401/403) — retry unlikely to help.
+    #[error("Authentication error from provider '{provider}': {detail}")]
+    AuthError { provider: String, detail: String },
+
+    // ── I/O errors ────────────────────────────────────────────────────────
     /// Could not create or write the output Markdown file.
     #[error("Failed to write output file '{path}': {source}")]
     OutputWriteFailed {
@@ -100,13 +125,11 @@ pub enum Pdf2MdError {
     },
 
     // ── Config errors ─────────────────────────────────────────────────────
-
     /// Builder validation failed.
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
 
     // ── Pdfium binding errors ─────────────────────────────────────────────
-
     /// Could not bind to a pdfium library.
     #[error("Failed to bind to pdfium library: {0}\n\n\
 Quick fix — run the bundled setup script:\n\
@@ -121,7 +144,6 @@ Then set the library path:\n\
     PdfiumBindingFailed(String),
 
     // ── Catch-all ─────────────────────────────────────────────────────────
-
     /// Unexpected internal error.
     #[error("Internal error: {0}")]
     Internal(String),
@@ -148,4 +170,58 @@ pub enum PageError {
     /// LLM call timed out.
     #[error("Page {page}: LLM call timed out after {secs}s")]
     Timeout { page: usize, secs: u64 },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partial_failure_display() {
+        let e = Pdf2MdError::PartialFailure {
+            success: 9,
+            failed: 1,
+            total: 10,
+        };
+        let msg = e.to_string();
+        assert!(msg.contains("1/10"), "got: {msg}");
+    }
+
+    #[test]
+    fn rate_limit_display_with_retry() {
+        let e = Pdf2MdError::RateLimitExceeded {
+            provider: "openai".into(),
+            retry_after_secs: Some(60),
+        };
+        assert!(e.to_string().contains("openai"));
+    }
+
+    #[test]
+    fn rate_limit_display_without_retry() {
+        let e = Pdf2MdError::RateLimitExceeded {
+            provider: "gemini".into(),
+            retry_after_secs: None,
+        };
+        assert!(e.to_string().contains("gemini"));
+    }
+
+    #[test]
+    fn api_timeout_display() {
+        let e = Pdf2MdError::ApiTimeout {
+            page: 3,
+            elapsed_ms: 5000,
+        };
+        assert!(e.to_string().contains("5000ms"));
+        assert!(e.to_string().contains("page 3"));
+    }
+
+    #[test]
+    fn auth_error_display() {
+        let e = Pdf2MdError::AuthError {
+            provider: "anthropic".into(),
+            detail: "invalid key".into(),
+        };
+        assert!(e.to_string().contains("anthropic"));
+        assert!(e.to_string().contains("invalid key"));
+    }
 }

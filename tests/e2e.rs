@@ -11,8 +11,7 @@
 //!   DYLD_LIBRARY_PATH=. cargo test --test e2e test_inspect -- --nocapture
 
 use edgequake_pdf2md::{
-    inspect, convert,
-    ConversionConfig, PageSelection, PageSeparator, FidelityTier,
+    convert, inspect, ConversionConfig, FidelityTier, PageSelection, PageSeparator,
 };
 use std::path::PathBuf;
 
@@ -152,7 +151,10 @@ async fn test_inspect_nonexistent() {
 fn test_page_selection_out_of_range_is_empty() {
     use edgequake_pdf2md::PageSelection;
     // Page 100 of a 4-page doc should yield no indices
-    assert_eq!(PageSelection::Single(100).to_indices(4), Vec::<usize>::new());
+    assert_eq!(
+        PageSelection::Single(100).to_indices(4),
+        Vec::<usize>::new()
+    );
 }
 
 #[test]
@@ -189,9 +191,15 @@ async fn test_convert_arxiv_page1() {
         .await
         .expect("conversion should succeed");
 
-    assert_eq!(result.stats.processed_pages, 1, "Should have processed 1 page");
+    assert_eq!(
+        result.stats.processed_pages, 1,
+        "Should have processed 1 page"
+    );
     assert_eq!(result.stats.failed_pages, 0, "No pages should fail");
-    assert!(result.stats.total_input_tokens > 0, "Should have consumed tokens");
+    assert!(
+        result.stats.total_input_tokens > 0,
+        "Should have consumed tokens"
+    );
 
     assert_markdown_quality(&result.markdown, "arxiv_page1");
 
@@ -204,9 +212,14 @@ async fn test_convert_arxiv_page1() {
     // Save result for human inspection
     std::fs::write(&out_path, &result.markdown).ok();
     println!("[arxiv_page1] Saved to {}", out_path.display());
-    println!("[arxiv_page1] Tokens: {} in / {} out",
-        result.stats.total_input_tokens, result.stats.total_output_tokens);
-    println!("--- BEGIN OUTPUT ---\n{}\n--- END OUTPUT ---", result.markdown);
+    println!(
+        "[arxiv_page1] Tokens: {} in / {} out",
+        result.stats.total_input_tokens, result.stats.total_output_tokens
+    );
+    println!(
+        "--- BEGIN OUTPUT ---\n{}\n--- END OUTPUT ---",
+        result.markdown
+    );
 }
 
 /// Test 2: Convert pages 1-2 of IRS Form 1040
@@ -227,7 +240,10 @@ async fn test_convert_irs_form() {
         .await
         .expect("conversion should succeed");
 
-    assert_eq!(result.stats.processed_pages, 2, "Should have processed 2 pages");
+    assert_eq!(
+        result.stats.processed_pages, 2,
+        "Should have processed 2 pages"
+    );
     assert_eq!(result.stats.total_pages, 2, "IRS form has 2 pages");
     assert_eq!(result.stats.failed_pages, 0);
 
@@ -248,7 +264,10 @@ async fn test_convert_irs_form() {
 
     std::fs::write(&out_path, &result.markdown).ok();
     println!("[irs_form] Saved to {}", out_path.display());
-    println!("--- BEGIN OUTPUT ---\n{}\n--- END OUTPUT ---", result.markdown);
+    println!(
+        "--- BEGIN OUTPUT ---\n{}\n--- END OUTPUT ---",
+        result.markdown
+    );
 }
 
 /// Test 3: Convert neuroscience textbook (structured document with sections)
@@ -286,7 +305,10 @@ async fn test_convert_neuroscience_textbook() {
 
     std::fs::write(&out_path, &result.markdown).ok();
     println!("[neuroscience] Saved to {}", out_path.display());
-    println!("--- BEGIN OUTPUT ---\n{}\n--- END OUTPUT ---", result.markdown);
+    println!(
+        "--- BEGIN OUTPUT ---\n{}\n--- END OUTPUT ---",
+        result.markdown
+    );
 }
 
 /// Test 4: Convert pages 1-3 of Attention paper with maintain_format
@@ -309,13 +331,19 @@ async fn test_convert_with_maintain_format() {
         .await
         .expect("conversion should succeed");
 
-    assert_eq!(result.stats.processed_pages, 3, "Should have processed 3 pages");
+    assert_eq!(
+        result.stats.processed_pages, 3,
+        "Should have processed 3 pages"
+    );
     assert_eq!(result.stats.failed_pages, 0);
     assert_markdown_quality(&result.markdown, "maintain_format");
 
     // Should have 2 separators for 3 pages
     let sep_count = result.markdown.matches("---").count();
-    assert!(sep_count >= 2, "Expected at least 2 HR separators for 3 pages, got {sep_count}");
+    assert!(
+        sep_count >= 2,
+        "Expected at least 2 HR separators for 3 pages, got {sep_count}"
+    );
 
     std::fs::write(&out_path, &result.markdown).ok();
     println!("[maintain_format] Saved to {}", out_path.display());
@@ -337,8 +365,8 @@ async fn test_convert_json_serialisable() {
         .expect("conversion should succeed");
 
     // Must serialise to JSON without error
-    let json = serde_json::to_string_pretty(&result)
-        .expect("ConversionOutput must serialise to JSON");
+    let json =
+        serde_json::to_string_pretty(&result).expect("ConversionOutput must serialise to JSON");
     assert!(!json.is_empty());
 
     // Must round-trip through deserialization
@@ -393,7 +421,10 @@ async fn test_convert_sample_text_first2_pages() {
         .await
         .expect("conversion should succeed");
 
-    assert_eq!(result.stats.processed_pages, 2, "Should have processed 2 pages");
+    assert_eq!(
+        result.stats.processed_pages, 2,
+        "Should have processed 2 pages"
+    );
     assert_eq!(result.stats.failed_pages, 0);
     assert_markdown_quality(&result.markdown, "sample_text");
 
@@ -405,5 +436,8 @@ async fn test_convert_sample_text_first2_pages() {
 
     std::fs::write(&out_path, &result.markdown).ok();
     println!("[sample_text] Saved to {}", out_path.display());
-    println!("--- BEGIN OUTPUT ---\n{}\n--- END OUTPUT ---", result.markdown);
+    println!(
+        "--- BEGIN OUTPUT ---\n{}\n--- END OUTPUT ---",
+        result.markdown
+    );
 }

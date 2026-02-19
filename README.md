@@ -30,7 +30,7 @@ Inspired by [pyzerox](https://github.com/getomni-ai/zerox), rebuilt in Rust for 
 ### 1. Install pdfium
 
 ```bash
-# Auto-detect OS & architecture
+# Auto-detect OS & architecture (recommended)
 ./scripts/setup-pdfium.sh
 
 # macOS: set library path
@@ -40,7 +40,7 @@ export DYLD_LIBRARY_PATH="$(pwd)"
 export LD_LIBRARY_PATH="$(pwd)"
 ```
 
-See [docs/installation.md](docs/installation.md) for manual install options (Homebrew, apt, manual download).
+> **Note:** pdfium doesn't have an official Homebrew package. Use the setup script above or see [docs/installation.md](docs/installation.md) for manual installation options.
 
 ### 2. Set an API key
 
@@ -141,9 +141,11 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-edgequake-pdf2md = "0.1"
+edgequake-pdf2md = "0.2"
 tokio = { version = "1", features = ["full"] }
 ```
+
+### Basic conversion
 
 ```rust
 use edgequake_pdf2md::{convert, ConversionConfig};
@@ -163,7 +165,103 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Also available: streaming API (`convert_stream`), sync wrapper (`convert_sync`), metadata inspection (`inspect`).
+### Convert PDF bytes in memory *(v0.2)*
+
+No temp-file management needed — pass raw bytes directly:
+
+```rust
+use edgequake_pdf2md::{convert_from_bytes, ConversionConfig};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = std::fs::read("document.pdf")?;  // or from DB / network
+    let config = ConversionConfig::default();
+    let output = convert_from_bytes(&bytes, &config).await?;
+    println!("{}", output.markdown);
+    Ok(())
+}
+```
+
+### Per-page progress callbacks *(v0.2)*
+
+```rust
+use edgequake_pdf2md::{convert, ConversionConfig, ConversionProgressCallback};
+use std::sync::Arc;
+
+struct MyProgress;
+
+impl ConversionProgressCallback for MyProgress {
+    fn on_conversion_start(&self, total: usize) {
+        eprintln!("Starting conversion of {total} pages");
+    }
+    fn on_page_complete(&self, page: usize, total: usize, chars: usize) {
+        eprintln!("  ✓ Page {page}/{total} — {chars} chars");
+    }
+    fn on_page_error(&self, page: usize, total: usize, error: &str) {
+        eprintln!("  ✗ Page {page}/{total} failed: {error}");
+    }
+    fn on_conversion_complete(&self, total: usize, success: usize) {
+        eprintln!("Done: {success}/{total} pages converted");
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = ConversionConfig::builder()
+        .progress_callback(Arc::new(MyProgress) as Arc<dyn ConversionProgressCallback>)
+        .build()?;
+    let output = convert("document.pdf", &config).await?;
+    println!("{}", output.markdown);
+    Ok(())
+}
+```
+
+### Strict error on partial failure *(v0.2)*
+
+By default, page failures are non-fatal. Use `into_result()` to promote them to errors:
+
+```rust
+use edgequake_pdf2md::{convert, ConversionConfig};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = ConversionConfig::default();
+    // into_result() returns Err(PartialFailure) if any pages failed
+    let output = convert("document.pdf", &config).await?.into_result()?;
+    println!("{}", output.markdown);
+    Ok(())
+}
+```
+
+### Provider injection *(v0.2)*
+
+Pass a pre-built `Arc<dyn LLMProvider>` directly — useful for sharing providers
+across multiple conversions and for testing with mocks:
+
+```rust
+use edgequake_pdf2md::{convert, ConversionConfig};
+use edgequake_llm::ProviderFactory;
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let (provider, _) = ProviderFactory::from_env()?;
+    let config = ConversionConfig::builder()
+        .provider(Arc::clone(&provider))   // injected; highest priority
+        .build()?;
+    let output = convert("document.pdf", &config).await?;
+    println!("{}", output.markdown);
+    Ok(())
+}
+```
+
+Provider resolution order (highest-to-lowest priority):
+1. `config.provider` — explicit `Arc<dyn LLMProvider>` injection
+2. `config.provider_name` + `config.model` — named provider
+3. `EDGEQUAKE_LLM_PROVIDER` + `EDGEQUAKE_MODEL` environment variables
+4. Auto-detect from API key env vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …)
+
+Also available: streaming API (`convert_stream`, `convert_stream_from_bytes`), sync wrapper (`convert_sync`), metadata inspection (`inspect`).
 
 See [API docs on docs.rs](https://docs.rs/edgequake-pdf2md) for the full API reference.
 

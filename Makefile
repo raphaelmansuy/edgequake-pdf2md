@@ -52,12 +52,14 @@ help: ## Show this help message
 	  sort
 	@printf "\n$(CYAN)Environment variables:$(RESET)\n"
 	@printf "  $(YELLOW)EDGEQUAKE_PROVIDER$(RESET)   LLM provider  (e.g. openai, anthropic, gemini)\n"
-  @printf "  $(YELLOW)EDGEQUAKE_MODEL$(RESET)      LLM model ID  (default: gpt-4.1-nano)\n"
+	@printf "  $(YELLOW)EDGEQUAKE_MODEL$(RESET)      LLM model ID  (default: gpt-4.1-nano)\n"
 	@printf "  $(YELLOW)PDF2MD_PAGES$(RESET)         Pages to convert (all|N|M-N|N,M,...)\n"
 	@printf "  $(YELLOW)BIN$(RESET)                  Path to pdf2md binary (default: release)\n"
 	@printf "\n$(CYAN)Quick start:$(RESET)\n"
 	@printf "  make setup           # Download pdfium + check env\n"
 	@printf "  make build           # Build release binary\n"
+	@printf "  make ci              # Run CI checks (format + lint + test + docs)\n"
+	@printf "  make pre-publish     # Run comprehensive pre-publish checks\n"
 	@printf "  make demo            # Convert page 1 of Attention paper\n"
 	@printf "  make test-e2e        # Run all e2e tests (needs API key)\n\n"
 
@@ -227,8 +229,35 @@ fmt-check: ## Check formatting without modifying files
 doc: ## Build and open documentation
 	cargo doc --no-deps --open 2>&1
 
+.PHONY: doc-test
+doc-test: ## Test documentation examples
+	cargo test --doc 2>&1
+
+.PHONY: audit
+audit: ## Check for security vulnerabilities in dependencies
+	@command -v cargo-audit >/dev/null 2>&1 || (printf "$(YELLOW)Installing cargo-audit...$(RESET)\n" && cargo install cargo-audit)
+	cargo audit 2>&1
+
 .PHONY: ci
-ci: fmt-check lint test ## Run all CI checks (format + lint + unit tests)
+ci: fmt-check lint test doc-test ## Run all CI checks (format + lint + unit tests + docs)
+
+.PHONY: ci-all
+ci-all: fmt-check lint test doc-test audit build ## Run comprehensive CI checks (includes build + audit)
+
+.PHONY: pre-publish
+pre-publish: ## Run all pre-publish checks before release
+	@bash scripts/pre-publish-check.sh
+
+.PHONY: pre-publish-check-version
+pre-publish-check-version: ## Run pre-publish checks with version verification
+	@bash scripts/pre-publish-check.sh --version v$(shell grep '^version = ' Cargo.toml | head -1 | sed 's/version = "//' | sed 's/".*//')
+
+.PHONY: msrv
+msrv: ## Check minimum supported Rust version (1.80)
+	@printf "$(BOLD)Checking MSRV (1.80)...$(RESET)\n"
+	rustup toolchain install 1.80 --profile minimal 2>/dev/null || true
+	cargo +1.80 check --all-features 2>&1
+	@printf "$(GREEN)✓ MSRV check passed$(RESET)\n"
 
 # ==============================================================================
 # ── Utilities ──────────────────────────────────────────────────────────────────

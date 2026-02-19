@@ -1,9 +1,10 @@
 class Pdfium < Formula
   desc "Prebuilt PDFium binaries (wrapper)"
   homepage "https://github.com/bblanchon/pdfium-binaries"
-  # We use the chromium tag as the version identifier used by the upstream
-  # pdfium-binaries releases. Update this when upstream publishes newer builds.
-  version "chromium/7690"
+  # We use the chromium tag's numeric part as the version identifier used by
+  # the upstream pdfium-binaries releases. Update this when upstream publishes
+  # newer builds.
+  version "7690"
 
   on_macos do
     if Hardware::CPU.arm?
@@ -40,7 +41,7 @@ class Pdfium < Formula
   def caveats
     <<~EOS
       This formula installs prebuilt PDFium native libraries from
-      bblanchon/pdfium-binaries (version #{version}).
+      bblanchon/pdfium-binaries (upstream tag chromium/#{version}).
 
       - macOS users may need to set:
           export DYLD_LIBRARY_PATH="#{opt_lib}:$DYLD_LIBRARY_PATH"

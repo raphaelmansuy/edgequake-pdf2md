@@ -11,11 +11,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.1.0] — 2026-02-19
+## [0.2.0] — 2026-05-28
 
 ### Added
 
-#### Core library
+#### Issue #1 — Per-page progress callbacks
+- New `ConversionProgressCallback` trait with default-no-op methods:
+  - `on_conversion_start(total_pages)`
+  - `on_page_start(page_num, total_pages)`
+  - `on_page_complete(page_num, total_pages, markdown_len)`
+  - `on_page_error(page_num, total_pages, error)`
+  - `on_conversion_complete(total_pages, success_count)`
+- `NoopProgressCallback` — zero-cost default implementation (no logging)
+- `ProgressCallback` type alias: `Arc<dyn ConversionProgressCallback>`
+- `ConversionConfig::progress_callback(cb)` builder method
+- Callback hooks wired into `convert()`, `process_concurrent()`, and `process_sequential()` in `convert.rs`
+- Re-exported from the crate root: `ConversionProgressCallback`, `NoopProgressCallback`, `ProgressCallback`
+
+#### Issue #2 — In-memory PDF input (`convert_from_bytes`)
+- `convert_from_bytes(bytes: &[u8], config: &ConversionConfig) -> Result<ConversionOutput, Pdf2MdError>` — written to a managed `NamedTempFile` internally; caller never manages temp files
+- `convert_stream_from_bytes(bytes: &[u8], config: &ConversionConfig) -> Result<PageStream, Pdf2MdError>` — streaming equivalent
+- Both functions re-exported from the crate root
+
+#### Issue #3 — Documented provider injection via `Arc<dyn LLMProvider>`
+- `ConversionConfig::provider(p: Arc<dyn LLMProvider>)` builder method is now fully documented with resolution-order guarantee:
+  1. `config.provider` (highest priority)
+  2. `config.provider_name` + `config.model`
+  3. `EDGEQUAKE_LLM_PROVIDER` + `EDGEQUAKE_MODEL` env vars
+  4. `ProviderFactory::from_env()` (auto-detect)
+
+#### Issue #4 — Richer `Pdf2MdError` variants
+- `Pdf2MdError::PartialFailure { success, failed, total }` — returned by `ConversionOutput::into_result()` when any pages fail
+- `Pdf2MdError::RateLimitExceeded { provider, retry_after_secs }` — HTTP 429 from VLM API
+- `Pdf2MdError::ApiTimeout { page, elapsed_ms }` — per-page API call timed out
+- `Pdf2MdError::AuthError { provider, detail }` — HTTP 401/403 from VLM API
+
+#### Output ergonomics
+- `ConversionOutput::failed_pages() -> usize` — convenience wrapper around `stats.failed_pages`
+- `ConversionOutput::into_result() -> Result<Self, Pdf2MdError>` — promote partial failure to an error
+
+### Changed
+- Crate version bumped to `0.2.0`
+- `lib.rs` re-exports updated to include all new public API surface
+
+---
+
 - `convert(input, config)` — async, eager conversion: renders all pages in
   parallel, returns a [`ConversionOutput`] with assembled Markdown and per-page
   statistics.

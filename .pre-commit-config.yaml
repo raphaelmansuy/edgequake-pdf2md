@@ -1,0 +1,76 @@
+# Pre-commit hooks configuration for edgequake-pdf2md
+# Install pre-commit: https://pre-commit.com/#install
+# Setup hooks: pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Rust code formatting with rustfmt
+  # ──────────────────────────────────────────────────────────────────────────
+  - repo: https://github.com/rust-lang/rust
+    rev: 1.80.0
+    hooks:
+      - id: rustfmt
+        stages: [commit]
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Clippy linter for Rust
+  # ──────────────────────────────────────────────────────────────────────────
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+      - id: clippy
+        stages: [commit]
+        args: [--all-features, --, -D, warnings]
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Generic pre-commit hooks (YAML, JSON, trailing whitespace, etc.)
+  # ──────────────────────────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      # Trim trailing whitespace
+      - id: trailing-whitespace
+        args: [--markdown-args=--ignore-all]
+
+      # Ensure files end with a newline
+      - id: end-of-file-fixer
+
+      # Check for files that would conflict in git
+      - id: check-merge-conflict
+
+      # Check YAML files
+      - id: check-yaml
+        args: [--unsafe]
+
+      # Check JSON files
+      - id: check-json
+
+      # Check TOML files
+      - id: check-toml
+
+      # Prevent giant files from being committed
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+
+      # Detect presence of private keys
+      - id: detect-private-key
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Markdown linting
+  # ──────────────────────────────────────────────────────────────────────────
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.37.0
+    hooks:
+      - id: markdownlint
+        args: [--fix, --ignore, CHANGELOG.md]
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # TOML linting and formatting
+  # ──────────────────────────────────────────────────────────────────────────
+  - repo: https://github.com/abravalheri/validate-pyproject
+    rev: v0.13.post1
+    hooks:
+      - id: validate-pyproject
+        files: pyproject.toml
+        additional_dependencies: [toml-cli]

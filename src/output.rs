@@ -5,7 +5,7 @@
 //! be missing (e.g. optional PDF metadata) uses `Option` rather than empty
 //! strings so callers can distinguish "not present" from "present but blank".
 
-use crate::error::PageError;
+use crate::error::{PageError, Pdf2MdError};
 use serde::{Deserialize, Serialize};
 
 /// The complete result of converting a PDF document to Markdown.
@@ -42,6 +42,48 @@ pub struct ConversionOutput {
     ///
     /// Useful for cost estimation, benchmark comparisons, and progress bars.
     pub stats: ConversionStats,
+}
+
+impl ConversionOutput {
+    /// Number of pages that failed (convenience wrapper around `stats.failed_pages`).
+    ///
+    /// Returns non-zero when partial conversion occurred. This may be checked
+    /// after conversion to alert users about pages that need manual review.
+    pub fn failed_pages(&self) -> usize {
+        self.stats.failed_pages
+    }
+
+    /// Convert this output into a `Result`, returning
+    /// [`Pdf2MdError::PartialFailure`] if any pages failed.
+    ///
+    /// Use this when the caller wants to treat *any* page failure as an error
+    /// rather than receiving partial output silently.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// # use edgequake_pdf2md::{convert, ConversionConfig};
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = ConversionConfig::default();
+    /// let output = convert("doc.pdf", &config).await?;
+    /// // Error if any page failed:
+    /// let output = output.into_result()?;
+    /// println!("{}", output.markdown);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn into_result(self) -> Result<Self, Pdf2MdError> {
+        let failed = self.stats.failed_pages;
+        if failed > 0 {
+            Err(Pdf2MdError::PartialFailure {
+                success: self.stats.processed_pages,
+                failed,
+                total: self.stats.total_pages,
+            })
+        } else {
+            Ok(self)
+        }
+    }
 }
 
 /// The result of converting a single page image through the VLM.
@@ -150,4 +192,51 @@ pub struct DocumentMetadata {
     pub pdf_version: String,
     /// Whether the document requires a password to open.
     pub is_encrypted: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_output(failed: usize, processed: usize, total: usize) -> ConversionOutput {
+        ConversionOutput {
+            markdown: "# Hello".into(),
+            pages: vec![],
+            metadata: DocumentMetadata::default(),
+            stats: ConversionStats {
+                total_pages: total,
+                processed_pages: processed,
+                failed_pages: failed,
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn failed_pages_matches_stats() {
+        let out = make_output(2, 8, 10);
+        assert_eq!(out.failed_pages(), 2);
+    }
+
+    #[test]
+    fn into_result_ok_when_no_failures() {
+        let out = make_output(0, 5, 5);
+        assert!(out.into_result().is_ok());
+    }
+
+    #[test]
+    fn into_result_err_on_partial_failure() {
+        let out = make_output(1, 9, 10);
+        let err = out.into_result().unwrap_err();
+        match err {
+            Pdf2MdError::PartialFailure {
+                success,
+                failed,
+                total,
+            } => {
+                assert_eq!((success, failed, total), (9, 1, 10));
+            }
+            other => panic!("expected PartialFailure, got {other:?}"),
+        }
+    }
 }

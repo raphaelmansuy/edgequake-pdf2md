@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Format Check: Ensure code is properly formatted with rustfmt
+  # ──────────────────────────────────────────────────────────────────────────
+  format:
+    name: Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Lint: Run clippy with strict warnings
+  # ──────────────────────────────────────────────────────────────────────────
+  lint:
+    name: Clippy Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-features -- -D warnings
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Unit Tests: Run all unit tests
+  # ──────────────────────────────────────────────────────────────────────────
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --lib --no-fail-fast
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Build: Ensure the project builds successfully in release mode
+  # ──────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --all-features
+      - run: cargo build --release --features cli
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Security Audit: Check for known vulnerabilities in dependencies
+  # ──────────────────────────────────────────────────────────────────────────
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Docs: Build documentation and test doc examples
+  # ──────────────────────────────────────────────────────────────────────────
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - run: cargo test --doc
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # MSRV: Verify Minimum Supported Rust Version (1.80)
+  # ──────────────────────────────────────────────────────────────────────────
+  msrv:
+    name: MSRV Check (1.80)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.80
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --all-features
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Final Status Check: All required checks must pass before merge
+  # ──────────────────────────────────────────────────────────────────────────
+  ci-status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs: [ format, lint, test, build, security-audit, docs, msrv ]
+    if: always()
+    steps:
+      - name: Check CI Results
+        run: |
+          if [ "${{ needs.format.result }}" != "success" ] || \
+             [ "${{ needs.lint.result }}" != "success" ] || \
+             [ "${{ needs.test.result }}" != "success" ] || \
+             [ "${{ needs.build.result }}" != "success" ] || \
+             [ "${{ needs.security-audit.result }}" != "success" ] || \
+             [ "${{ needs.docs.result }}" != "success" ] || \
+             [ "${{ needs.msrv.result }}" != "success" ]; then
+            echo "❌ CI checks failed!"
+            exit 1
+          fi
+          echo "✓ All CI checks passed!"
