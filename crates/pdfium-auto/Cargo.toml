@@ -1,6 +1,6 @@
 [package]
 name         = "pdfium-auto"
-version      = "0.2.0"
+version      = "0.3.0"
 edition      = "2021"
 rust-version = "1.88"
 description  = "Auto-download and cache PDFium binaries — zero-friction setup for pdfium-render"
@@ -13,16 +13,20 @@ readme       = "README.md"
 [features]
 # Embed the pdfium dylib inside the Rust binary at compile time.
 #
-# Activate by setting the `PDFIUM_BUNDLE_LIB` environment variable to the
-# path of a platform-compatible `libpdfium.dylib` / `libpdfium.so` /
-# `pdfium.dll` *before* running `cargo build`:
+# When this feature is active, `build.rs` embeds the platform pdfium library
+# into the binary via `include_bytes!`. On first run the bytes are extracted
+# to the cache directory and the library is loaded from there.
 #
-#   PDFIUM_BUNDLE_LIB=/path/to/libpdfium.dylib \
-#     cargo build --release --features pdfium-auto/bundled
+# Build-time library resolution (first match wins):
 #
-# The embedded bytes are extracted to the pdfium-auto cache directory on
-# first use, so the resulting binary is fully self-contained: no internet
-# access or pre-installed shared library is required at runtime.
+#   1. PDFIUM_BUNDLE_LIB=/path/to/libpdfium  — set explicitly (CI / air-gapped)
+#   2. Auto-download from bblanchon/pdfium-binaries via `curl`
+#
+# Auto-downloaded archives are cached in:
+#   {$CARGO_HOME}/pdfium-bundle/{VERSION}/{TARGET_OS}-{TARGET_ARCH}/
+#
+# The resulting binary is fully self-contained: no internet access or
+# pre-installed shared library is required at runtime.
 bundled = []
 
 [dependencies]
@@ -41,3 +45,8 @@ thiserror    = "2"
 
 # Platform-specific cache directories
 dirs         = "5"
+
+[build-dependencies]
+# Used by build.rs to extract the pdfium archive when bundling.
+flate2 = "1"
+tar    = "0"

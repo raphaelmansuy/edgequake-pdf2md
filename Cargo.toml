@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name    = "edgequake-pdf2md"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.88"
 description  = "Convert PDF documents to Markdown using Vision Language Models — CLI and library"
@@ -42,7 +42,7 @@ path = "src/lib.rs"
 # Core
 pdfium-render  = { version = "0.8", features = ["pdfium_latest", "image_latest", "thread_safe"] }
 # Auto-download pdfium: zero-friction setup for end-users
-pdfium-auto    = { path = "crates/pdfium-auto", version = "0.2" }
+pdfium-auto    = { path = "crates/pdfium-auto", version = "0.3" }
 # v0.2.2 fixes OpenAIProvider::convert_messages() silently dropping ChatMessage.images.
 # We pin to "0.2.2" rather than "0.2" to guarantee the vision fix is present.
 edgequake-llm  = "0.2.2"
@@ -81,11 +81,12 @@ anyhow         = { version = "1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 [features]
-default = ["cli"]
+default = ["cli", "bundled"]
 cli     = ["dep:clap", "dep:anyhow", "dep:tracing-subscriber", "dep:indicatif"]
-# Embed the pdfium shared library in the binary at compile time.
-# Set PDFIUM_BUNDLE_LIB=/path/to/libpdfium.dylib before running cargo build.
-# See crates/pdfium-auto/README.md for details.
+# Embed the pdfium shared library in the binary at compile time (default).
+# Build-time resolution: PDFIUM_BUNDLE_LIB env var, else auto-download via curl.
+# Cache: ~/.cargo/pdfium-bundle/{VERSION}/{OS}-{ARCH}/  (override: PDFIUM_BUILD_CACHE_DIR)
+# Opt out: cargo install edgequake-pdf2md --no-default-features --features cli
 bundled = ["pdfium-auto/bundled"]
 
 [dev-dependencies]

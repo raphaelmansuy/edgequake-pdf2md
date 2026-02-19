@@ -11,6 +11,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.0] — 2026-02-19
+
+### Changed — **Breaking feature default**
+
+- **`bundled` is now the default feature** (`default = ["cli", "bundled"]`).
+  `cargo install edgequake-pdf2md` produces a fully self-contained binary with
+  pdfium (~5 MB) embedded inside — no runtime download, no env vars required.
+
+### Added
+
+- **Auto-download in `build.rs`** when `bundled` feature is active and
+  `PDFIUM_BUNDLE_LIB` is not set: `build.rs` downloads the correct pdfium
+  release archive for the build target using `curl` and caches it in
+  `~/.cargo/pdfium-bundle/{VERSION}/{TARGET_OS}-{TARGET_ARCH}/`.
+  - Override cache root: `PDFIUM_BUILD_CACHE_DIR=/path`
+  - Opt out of auto-download: set `PDFIUM_BUNDLE_LIB=/path/to/libpdfium`
+  - Opt out of bundling entirely:
+    `cargo install edgequake-pdf2md --no-default-features --features cli`
+
+- **CI bundled build matrix** — verifies self-contained binary builds on:
+  - macOS arm64 (`macos-latest`)
+  - macOS x86_64 (`macos-13`)
+  - Linux x86_64 (`ubuntu-latest`)
+  - Linux aarch64 (`ubuntu-24.04-arm`)
+  - Windows x86_64 (`windows-latest`)
+
+- **`pdfium-auto` v0.3.0**: `build.rs` auto-download; `[build-dependencies]`
+  (`flate2`, `tar`) added for archive extraction.
+
+### Fixed
+
+- `cargo install edgequake-pdf2md` now works out of the box — pdfium is
+  downloaded and embedded at compile time, not at first run.
+
+---
+
 ## [0.3.1] — 2026-02-19
 
 ### Added

@@ -22,14 +22,21 @@ Inspired by [pyzerox](https://github.com/getomni-ai/zerox), rebuilt in Rust for 
 - **Fast** — concurrent page processing with configurable parallelism
 - **Accurate** — 10-rule post-processing pipeline fixes tables, removes hallucinations, normalises output
 - **Flexible** — page selection, fidelity tiers, custom system prompts, streaming API
-- **Cross-platform** — macOS (ARM/x64), Linux (x64/ARM64/musl), Windows
+- **Self-contained** — pdfium (~5 MB) embedded in the binary by default; no runtime downloads, no env vars
+- **Cross-platform** — macOS (arm64/x64), Linux (x64/aarch64), Windows (x64/arm64)
 - **Library + CLI** — use as a Rust crate or standalone command-line tool
 
 ## Quick Start
 
-> **Zero setup for pdfium.** The correct PDFium binary (~30 MB) is downloaded automatically on
-> first run and cached in `~/.cache/pdf2md/pdfium-7690/`. No `DYLD_LIBRARY_PATH` required.
-> Use `PDFIUM_LIB_PATH` to point to an existing copy instead.
+> **Self-contained binary — zero runtime setup.** Starting from v0.4.0, the
+> PDFium engine (~5 MB) is **embedded inside the binary** at compile time
+> (`bundled` feature is now the default). No download required at runtime,
+> no `DYLD_LIBRARY_PATH`, no environment variables needed.
+>
+> Build-time auto-download: if you don't set `PDFIUM_BUNDLE_LIB`, the correct
+> pdfium library is downloaded automatically during `cargo build` and cached in
+> `~/.cargo/pdfium-bundle/`. Use `PDFIUM_LIB_PATH` to point to an existing copy
+> at runtime (download mode, without `bundled` feature).
 
 ### 1. Set an API key
 
@@ -44,7 +51,7 @@ export GEMINI_API_KEY="AI..."          # Google Gemini
 ### 2. Build & run
 
 ```bash
-cargo build --release --features cli
+cargo build --release
 
 # Convert a PDF
 ./target/release/pdf2md document.pdf -o output.md
@@ -58,7 +65,7 @@ cargo build --release --features cli
 
 Or install globally:
 ```bash
-cargo install --path . --features cli
+cargo install edgequake-pdf2md
 pdf2md document.pdf -o output.md
 ```
 
@@ -130,7 +137,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-edgequake-pdf2md = "0.3"
+edgequake-pdf2md = "0.4"
 tokio = { version = "1", features = ["full"] }
 ```
 
