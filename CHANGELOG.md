@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.1] — 2026-02-19
+
+### Fixed
+
+- **CI/CD publish workflow**: `CARGO_REGISTRY_TOKEN` is now properly used in the
+  publish workflow — automated `cargo publish` on tag push is fully operational.
+- Minor version bump to enable automated crates.io publish via GitHub Actions
+  (v0.4.0 was published manually due to missing token; no functional changes).
+
+---
+
 ## [0.4.0] — 2026-02-19
 
 ### Changed — **Breaking feature default**
