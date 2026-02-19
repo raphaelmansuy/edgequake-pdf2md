@@ -10,6 +10,21 @@ keywords     = ["pdf", "pdfium", "rendering", "download", "setup"]
 categories   = ["external-ffi-bindings", "rendering", "command-line-utilities"]
 readme       = "README.md"
 
+[features]
+# Embed the pdfium dylib inside the Rust binary at compile time.
+#
+# Activate by setting the `PDFIUM_BUNDLE_LIB` environment variable to the
+# path of a platform-compatible `libpdfium.dylib` / `libpdfium.so` /
+# `pdfium.dll` *before* running `cargo build`:
+#
+#   PDFIUM_BUNDLE_LIB=/path/to/libpdfium.dylib \
+#     cargo build --release --features pdfium-auto/bundled
+#
+# The embedded bytes are extracted to the pdfium-auto cache directory on
+# first use, so the resulting binary is fully self-contained: no internet
+# access or pre-installed shared library is required at runtime.
+bundled = []
+
 [dependencies]
 # Re-export the pdfium-render Pdfium struct for callers
 pdfium-render = { version = "0.8", features = ["pdfium_latest", "image_latest", "thread_safe"] }

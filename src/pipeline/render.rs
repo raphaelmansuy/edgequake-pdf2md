@@ -23,13 +23,30 @@ use pdfium_render::prelude::*;
 use std::path::Path;
 use tracing::{debug, info, warn};
 
-/// Obtain a `Pdfium` instance via pdfium-auto (download-on-first-use).
+/// Obtain a `Pdfium` instance via pdfium-auto.
+///
+/// When the `bundled` feature is active the pdfium shared library was embedded
+/// in the binary at compile time; it is extracted to the cache directory on
+/// first use and loaded from there (no network access required).
+///
+/// Without the `bundled` feature the library is downloaded on first use from
+/// <https://github.com/bblanchon/pdfium-binaries> and cached locally.
 ///
 /// # Errors
-/// Returns `Pdf2MdError::Internal` when the library cannot be downloaded or
-/// loaded.  The error message tells the user exactly what happened and includes
-/// a `PDFIUM_LIB_PATH` override hint.
+/// Returns `Pdf2MdError::Internal` when the library cannot be loaded.  The
+/// error message includes a `PDFIUM_LIB_PATH` override hint.
 fn get_pdfium() -> Result<Pdfium, Pdf2MdError> {
+    #[cfg(feature = "bundled")]
+    {
+        return pdfium_auto::bind_bundled().map_err(|e| {
+            Pdf2MdError::Internal(format!(
+                "PDFium library (bundled) unavailable: {e}\n\
+                 Hint: set PDFIUM_LIB_PATH=/path/to/libpdfium to use an existing copy."
+            ))
+        });
+    }
+
+    #[cfg(not(feature = "bundled"))]
     pdfium_auto::bind_pdfium_silent().map_err(|e| {
         Pdf2MdError::Internal(format!(
             "PDFium library unavailable: {e}\n\

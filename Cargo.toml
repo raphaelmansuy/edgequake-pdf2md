@@ -83,6 +83,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 [features]
 default = ["cli"]
 cli     = ["dep:clap", "dep:anyhow", "dep:tracing-subscriber", "dep:indicatif"]
+# Embed the pdfium shared library in the binary at compile time.
+# Set PDFIUM_BUNDLE_LIB=/path/to/libpdfium.dylib before running cargo build.
+# See crates/pdfium-auto/README.md for details.
+bundled = ["pdfium-auto/bundled"]
 
 [dev-dependencies]
 tokio-test        = "0.4"
