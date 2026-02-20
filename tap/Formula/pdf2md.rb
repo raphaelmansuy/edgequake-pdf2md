@@ -12,8 +12,8 @@
 class Pdf2md < Formula
   desc "Convert PDF documents to Markdown using Vision LLMs (self-contained)"
   homepage "https://github.com/raphaelmansuy/edgequake-pdf2md"
-  url "https://github.com/raphaelmansuy/edgequake-pdf2md/archive/refs/tags/v0.4.1.tar.gz"
-  sha256 "1582bf2975beaee8173f1edd3600e5bcb2d0f9467787ed3701d5a4ecccfe95fb"
+  url "https://github.com/raphaelmansuy/edgequake-pdf2md/archive/refs/tags/v0.4.2.tar.gz"
+  sha256 "883b3e3a71995449e0cd970f8664ff18ebf428f7fd5ce0d8592c93a5555251ad"
   license "MIT"
   head "https://github.com/raphaelmansuy/edgequake-pdf2md.git", branch: "main"
 
