@@ -11,6 +11,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.3] — 2026-02-20
+
+### Added
+
+#### Mistral AI provider support (`pixtral-12b-2409`)
+
+- **Mistral as a first-class provider** via `edgequake-llm 0.2.4` (Mistral
+  added in 0.2.3; 0.2.4 is a docs/Python bindings bump with no Rust API
+  changes).
+
+  Use Mistral for PDF conversion by setting `MISTRAL_API_KEY`:
+  ```bash
+  export MISTRAL_API_KEY=your-key
+  pdf2md document.pdf -o output.md            # auto-selects pixtral-12b-2409
+  pdf2md --provider mistral document.pdf      # explicit, same default model
+  pdf2md --provider mistral --model pixtral-12b-2409 document.pdf
+  ```
+
+- **Vision-aware model default for Mistral**: `pixtral-12b-2409` is set as
+  the automatic default when `--provider mistral` is used (or
+  `MISTRAL_API_KEY` is the only key set) without an explicit `--model`. The
+  Mistral SDK default (`mistral-small-latest`) is **not** vision-capable and
+  would fail on every page; this prevents a silent misuse footgun.
+
+- **Auto-detection chain updated** in `resolve_provider`: after the OpenAI
+  preference block, `MISTRAL_API_KEY` is now checked explicitly so the
+  correct pixtral default is applied even when the factory's generic
+  `from_env()` would otherwise select an incompatible model.
+
+- **Mistral row** added to `--help` provider table and `ENVIRONMENT VARIABLES`
+  section in the CLI (`pdf2md --help`).
+
+#### Mistral models reference
+
+| Model | Context | Vision | Notes |
+|-------|---------|--------|-------|
+| `pixtral-12b-2409` | 128K | ✓ | Recommended for PDF conversion |
+| `mistral-small-latest` | 32K | ✗ | Text-only |
+| `mistral-large-latest` | 128K | ✗ | Text-only |
+
+#### New tests
+
+- `test_default_vision_model_mistral_variants` — unit test: all Mistral name
+  aliases map to `pixtral-12b-2409`
+- `test_default_vision_model_other_providers` — unit test: non-Mistral
+  providers fall back to `gpt-4.1-nano`
+- `test_mistral_config_builder_accepts_provider_name` — structural: config
+  builder accepts `provider_name = "mistral"` without errors
+- `test_mistral_pixtral_model_available` — structural: `pixtral-12b-2409`
+  appears in `MistralProvider::available_models()` catalogue
+- `test_pixtral_supports_vision` — structural: pixtral has the expected 128K
+  context window
+- `test_mistral_pdf_conversion` — gated e2e test (requires `E2E_ENABLED=1` +
+  `MISTRAL_API_KEY`): converts a single PDF page with pixtral
+
+### Changed
+
+#### Dependency bump: `edgequake-llm` 0.2.2 → 0.2.4
+
+- `0.2.3`: Added `MistralProvider` with pixtral-12b-2409 vision support
+- `0.2.4`: Documentation + `edgequake-litellm` Python bindings (no Rust API
+  changes)
+
+### Migration
+
+No breaking changes. Existing code and deployments continue to work
+unchanged. Mistral support is purely additive.
+
+---
+
 ## [0.4.2] — 2026-02-20
 
 ### Fixed

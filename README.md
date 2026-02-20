@@ -18,7 +18,7 @@ Inspired by [pyzerox](https://github.com/getomni-ai/zerox), rebuilt in Rust for 
 
 ## Features
 
-- **Multi-provider** — OpenAI, Anthropic, Google Gemini, Azure, Ollama, or any OpenAI-compatible endpoint
+- **Multi-provider** — OpenAI, Anthropic, Google Gemini, Mistral AI, Azure, Ollama, or any OpenAI-compatible endpoint
 - **Fast** — concurrent page processing with configurable parallelism
 - **Accurate** — 10-rule post-processing pipeline fixes tables, removes hallucinations, normalises output
 - **Flexible** — page selection, fidelity tiers, custom system prompts, streaming API
@@ -46,6 +46,8 @@ export OPENAI_API_KEY="sk-..."    # OpenAI (recommended)
 export ANTHROPIC_API_KEY="sk-ant-..."  # Anthropic
 # or
 export GEMINI_API_KEY="AI..."          # Google Gemini
+# or
+export MISTRAL_API_KEY="..."           # Mistral AI (uses pixtral-12b-2409)
 ```
 
 ### 2. Build & run
@@ -106,6 +108,12 @@ pdf2md --json --metadata document.pdf > output.json
 # Use Anthropic
 pdf2md --provider anthropic --model claude-sonnet-4-20250514 document.pdf
 
+# Use Mistral (pixtral-12b-2409 auto-selected as vision model)
+export MISTRAL_API_KEY=your-key
+pdf2md document.pdf
+# or explcitly:
+pdf2md --provider mistral --model pixtral-12b-2409 document.pdf
+
 # Use local Ollama
 pdf2md --provider ollama --model llava document.pdf
 ```
@@ -125,6 +133,7 @@ See [docs/examples.md](docs/examples.md) for more usage patterns.
 | **Anthropic** | claude-haiku-4-20250514 | $0.80 | $4.00 | ✓ |
 | **Gemini** | gemini-2.0-flash | $0.10 | $0.40 | ✓ |
 | **Gemini** | gemini-2.5-pro | $1.25 | $10.00 | ✓ |
+| **Mistral** | pixtral-12b-2409 | $0.15 | $0.15 | ✓ |
 | **Ollama** | llava, llama3.2-vision | free | free | ✓ |
 
 **Cost estimate:** A 50-page document costs ~$0.02 with gpt-4.1-nano, ~$0.09 with gpt-4.1-mini.
@@ -255,7 +264,7 @@ Provider resolution order (highest-to-lowest priority):
 1. `config.provider` — explicit `Arc<dyn LLMProvider>` injection
 2. `config.provider_name` + `config.model` — named provider
 3. `EDGEQUAKE_LLM_PROVIDER` + `EDGEQUAKE_MODEL` environment variables
-4. Auto-detect from API key env vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …)
+4. Auto-detect from API key env vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`, …)
 
 Also available: streaming API (`convert_stream`, `convert_stream_from_bytes`), sync wrapper (`convert_sync`), metadata inspection (`inspect`).
 

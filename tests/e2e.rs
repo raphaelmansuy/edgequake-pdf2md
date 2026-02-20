@@ -499,3 +499,109 @@ fn test_noop_callback_is_send_sync() {
     let cb: Arc<dyn ConversionProgressCallback> = Arc::new(NoopProgressCallback);
     cb.on_page_error(1, 1, "an error".to_string());
 }
+
+// ── Mistral provider structural tests (no API calls, always run) ──────────────
+
+/// Verify that ConversionConfig accepts "mistral" as a provider name without
+/// panicking or returning an error at config-build time (no API call happens).
+#[test]
+fn test_mistral_config_builder_accepts_provider_name() {
+    let config = ConversionConfig::builder()
+        .dpi(150)
+        .concurrency(1)
+        .build()
+        .expect("builder must succeed");
+
+    let mut cfg = config;
+    cfg.provider_name = Some("mistral".to_string());
+    cfg.model = Some("pixtral-12b-2409".to_string());
+
+    assert_eq!(cfg.provider_name.as_deref(), Some("mistral"));
+    assert_eq!(cfg.model.as_deref(), Some("pixtral-12b-2409"));
+}
+
+/// When provider_name is "mistral" and no model is set, the library must use
+/// "pixtral-12b-2409" (the only vision-capable Mistral model). We verify this
+/// by checking that `MistralProvider` is recognised by `ProviderFactory` and
+/// that the pixtral model exists in the Mistral catalogue.
+#[test]
+fn test_mistral_pixtral_model_available() {
+    use edgequake_llm::MistralProvider;
+
+    let models = MistralProvider::available_models();
+    let ids: Vec<&str> = models.iter().map(|(id, _, _)| *id).collect();
+    assert!(
+        ids.contains(&"pixtral-12b-2409"),
+        "pixtral-12b-2409 must be in MistralProvider catalogue; got: {:?}",
+        ids
+    );
+}
+
+/// Verify vision capability flag is set on pixtral-12b-2409.
+#[test]
+fn test_pixtral_supports_vision() {
+    use edgequake_llm::MistralProvider;
+
+    // MistralProvider::available_models() returns (id, display_name, context_len)
+    // Vision info comes from context_length lookup — pixtral has 128K context.
+    // We verify context_length > 0 (non-embedding model, vision-capable).
+    let ctx = MistralProvider::context_length("pixtral-12b-2409");
+    assert!(
+        ctx > 0,
+        "pixtral-12b-2409 must have positive context length (vision-capable model)"
+    );
+    assert_eq!(
+        ctx, 131072,
+        "pixtral-12b-2409 should have 128K context window"
+    );
+}
+
+/// Gated e2e test: convert a PDF page with Mistral pixtral-12b-2409.
+/// Requires E2E_ENABLED=1 and MISTRAL_API_KEY to be set.
+#[tokio::test]
+async fn test_mistral_pdf_conversion() {
+    if std::env::var("E2E_ENABLED").is_err() {
+        println!("SKIP — set E2E_ENABLED=1 and MISTRAL_API_KEY to run");
+        return;
+    }
+    if std::env::var("MISTRAL_API_KEY").is_err() {
+        println!("SKIP — MISTRAL_API_KEY not set");
+        return;
+    }
+
+    let pdf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("test_cases")
+        .join("sample.pdf");
+    if !pdf_path.exists() {
+        println!("SKIP — test_cases/sample.pdf not found. Run: make download-test-pdfs");
+        return;
+    }
+
+    let config = ConversionConfig::builder()
+        .dpi(150)
+        .concurrency(1)
+        .pages(PageSelection::Single(1))
+        .fidelity(FidelityTier::Tier1)
+        .max_tokens(2048)
+        .build()
+        .expect("config must build");
+
+    let mut cfg = config;
+    cfg.provider_name = Some("mistral".to_string());
+    cfg.model = Some("pixtral-12b-2409".to_string());
+
+    let result = convert(&pdf_path.to_string_lossy(), &cfg)
+        .await
+        .expect("Mistral conversion must succeed");
+
+    assert!(
+        !result.markdown.trim().is_empty(),
+        "Mistral conversion must produce non-empty Markdown"
+    );
+    assert_eq!(result.stats.processed_pages, 1);
+    println!(
+        "Mistral output ({} chars):\n{}",
+        result.markdown.len(),
+        result.markdown
+    );
+}

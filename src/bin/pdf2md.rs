@@ -199,6 +199,10 @@ const AFTER_HELP: &str = r#"EXAMPLES:
   # Use a specific model
   pdf2md --model gpt-4.1 --provider openai document.pdf
 
+  # Use Mistral (pixtral-12b-2409 auto-selected as the vision model)
+  export MISTRAL_API_KEY=your-key
+  pdf2md document.pdf
+
   # Convert from URL
   pdf2md https://arxiv.org/pdf/1706.03762 -o attention.md
 
@@ -222,6 +226,7 @@ SUPPORTED PROVIDERS & MODELS:
   anthropic    claude-haiku-4-20250514          $0.80       $4.00        ✓
   gemini       gemini-2.0-flash       $0.10       $0.40        ✓
   gemini       gemini-2.5-pro         $1.25       $10.00       ✓
+  mistral      pixtral-12b-2409       $0.15       $0.15        ✓
   ollama       llava, llama3.2-vision free        free         ✓
 
 COST ESTIMATE (50-page document @ 150 DPI):
@@ -237,7 +242,8 @@ ENVIRONMENT VARIABLES:
   OPENAI_API_KEY          OpenAI API key
   ANTHROPIC_API_KEY       Anthropic API key
   GEMINI_API_KEY          Google Gemini API key
-  EDGEQUAKE_LLM_PROVIDER  Override provider (openai, anthropic, gemini, ollama)
+  MISTRAL_API_KEY         Mistral AI API key (uses pixtral-12b-2409 for vision)
+  EDGEQUAKE_LLM_PROVIDER  Override provider (openai, anthropic, gemini, mistral, ollama)
   EDGEQUAKE_MODEL         Override model ID
   PDFIUM_LIB_PATH         Path to an existing libpdfium — skips auto-download
   PDFIUM_AUTO_CACHE_DIR   Override the default pdfium cache directory

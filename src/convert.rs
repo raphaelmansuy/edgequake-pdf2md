@@ -279,6 +279,21 @@ pub async fn convert_from_bytes(
 
 // ── Internal helpers ─────────────────────────────────────────────────────
 
+/// Return the best default vision model for a named provider.
+///
+/// For most providers the caller's model choice is respected; this function
+/// only matters when no model is supplied by the user.
+/// - **Mistral**: `pixtral-12b-2409` is the only vision-capable model;
+///   `mistral-small-latest` (the Mistral SDK default) does **not** support
+///   image inputs and would error on every page.
+/// - All others fall back to `gpt-4.1-nano` (fast, cheap, vision-capable).
+fn default_vision_model_for_provider(provider_name: &str) -> &'static str {
+    match provider_name {
+        "mistral" | "mistral-ai" | "mistralai" => "pixtral-12b-2409",
+        _ => "gpt-4.1-nano",
+    }
+}
+
 /// Instantiate a named provider with the given model.
 ///
 /// Uses [`ProviderFactory::create_llm_provider`] for all providers.
@@ -326,9 +341,12 @@ async fn resolve_provider(config: &ConversionConfig) -> Result<Arc<dyn LLMProvid
         return Ok(Arc::clone(provider));
     }
 
-    // 2) Provider name + model
+    // 2) Provider name + model (use provider-aware vision model as default)
     if let Some(ref name) = config.provider_name {
-        let model = config.model.as_deref().unwrap_or("gpt-4.1-nano");
+        let model = config
+            .model
+            .as_deref()
+            .unwrap_or_else(|| default_vision_model_for_provider(name));
         return create_vision_provider(name, model);
     }
 
@@ -349,6 +367,16 @@ async fn resolve_provider(config: &ConversionConfig) -> Result<Arc<dyn LLMProvid
         if !openai_key.is_empty() {
             let model = config.model.as_deref().unwrap_or("gpt-4.1-nano");
             return create_vision_provider("openai", model);
+        }
+    }
+
+    // Mistral: auto-select the vision-capable pixtral model when MISTRAL_API_KEY
+    // is set and no other preferred provider key is present. The Mistral SDK
+    // default (mistral-small-latest) is not vision-capable so we must override.
+    if let Ok(mistral_key) = std::env::var("MISTRAL_API_KEY") {
+        if !mistral_key.is_empty() {
+            let model = config.model.as_deref().unwrap_or("pixtral-12b-2409");
+            return create_vision_provider("mistral", model);
         }
     }
 
@@ -491,4 +519,42 @@ fn format_yaml_front_matter(meta: &DocumentMetadata) -> String {
 
     yaml.push_str("---\n\n");
     yaml
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_vision_model_mistral_variants() {
+        // All recognized Mistral name variants must return the vision model.
+        for name in &["mistral", "mistral-ai", "mistralai"] {
+            assert_eq!(
+                default_vision_model_for_provider(name),
+                "pixtral-12b-2409",
+                "provider '{}' should default to pixtral-12b-2409",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_default_vision_model_other_providers() {
+        // All non-Mistral providers fall back to gpt-4.1-nano.
+        for name in &[
+            "openai",
+            "anthropic",
+            "gemini",
+            "ollama",
+            "azure",
+            "unknown",
+        ] {
+            assert_eq!(
+                default_vision_model_for_provider(name),
+                "gpt-4.1-nano",
+                "provider '{}' should default to gpt-4.1-nano",
+                name
+            );
+        }
+    }
 }
