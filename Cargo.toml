@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name    = "edgequake-pdf2md"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2021"
 rust-version = "1.88"
 description  = "Convert PDF documents to Markdown using Vision Language Models — CLI and library"
@@ -45,8 +45,10 @@ pdfium-render  = { version = "0.8", features = ["pdfium_latest", "image_latest",
 pdfium-auto    = { path = "crates/pdfium-auto", version = "0.3" }
 # v0.2.3 adds MistralProvider with pixtral-12b-2409 vision support.
 # v0.2.4 adds edgequake-litellm Python bindings (docs bump; no Rust API changes).
-# We pin to "0.2.4" to guarantee Mistral + vision fixes are present.
-edgequake-llm  = "0.2.4"
+# v0.2.5 fixes issue #13: max_completion_tokens for gpt-4.1-nano / o-series
+#         (async-openai upgraded 0.24→0.33; max_tokens now routes correctly).
+# We pin to "0.2.5" to guarantee gpt-4.1-nano vision extraction works.
+edgequake-llm  = "0.2.5"
 tokio          = { version = "1", features = ["full"] }
 futures        = "0.3"
 tokio-stream   = "0.1"

@@ -11,6 +11,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.4] — 2026-02-20
+
+### Fixed
+
+- **Issue #13 — `gpt-4.1-nano` (and o1/o3/o4-mini) rejected all PDF vision
+  requests** with `400 Bad Request: 'max_tokens' is not supported with this
+  model. Use 'max_completion_tokens' instead.`
+
+  Root cause: `edgequake-llm ≤ 0.2.4` passed `max_tokens` in the OpenAI
+  request body for every model. The gpt-4.1 family and o-series only accept
+  `max_completion_tokens`.
+
+  Fix: bump dependency `edgequake-llm` `0.2.4` → `0.2.5`. The 0.2.5 release
+  upgrades `async-openai` from 0.24 → 0.33, which exposes
+  `max_completion_tokens` natively and uses it unconditionally (valid for all
+  current chat models).
+
+### Changed
+
+- **`edgequake-llm` dependency bumped** `0.2.4` → `0.2.5`.
+  - 0.2.5: async-openai 0.24 → 0.33 upgrade; `max_tokens` → `max_completion_tokens`
+    routing; cache-hit + reasoning-token extraction; 23 new tests.
+
+### Tests
+
+- `test_issue13_max_tokens_config_builds_for_gpt41_nano` — always-run: verifies
+  `ConversionConfig::builder().max_tokens(2048)` round-trips the field without
+  panic (compile-time + config-layer regression guard).
+- `test_gpt41_nano_max_completion_tokens_regression` — gated e2e test (requires
+  `E2E_ENABLED=1` and `OPENAI_API_KEY`): converts a PDF page with `gpt-4.1-nano`
+  and `max_tokens=2048`; fails if the `400 Bad Request` from issue #13 recurs.
+
+---
+
 ## [0.4.3] — 2026-02-20
 
 ### Added
