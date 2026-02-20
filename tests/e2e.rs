@@ -557,6 +557,86 @@ fn test_pixtral_supports_vision() {
 }
 
 /// Gated e2e test: convert a PDF page with Mistral pixtral-12b-2409.
+/// Structural regression test for issue #13 (max_completion_tokens).
+///
+/// Verifies that a `ConversionConfig` with `max_tokens` set and the default
+/// OpenAI provider builds and resolves without panicking. The fix lives in
+/// `edgequake-llm` ≥ 0.2.5 (async-openai 0.33 routes `CompletionOptions::
+/// max_tokens` → `max_completion_tokens` for gpt-4.1-nano / o-series).
+/// No network call is made — this is a compile-time + config-layer check.
+#[test]
+fn test_issue13_max_tokens_config_builds_for_gpt41_nano() {
+    use edgequake_pdf2md::ConversionConfig;
+
+    let config = ConversionConfig::builder()
+        .dpi(150)
+        .max_tokens(2048)
+        .build()
+        .expect("config must build with max_tokens set");
+
+    // max_tokens must be forwarded through CompletionOptions unchanged.
+    assert_eq!(
+        config.max_tokens, 2048,
+        "max_tokens must round-trip through builder"
+    );
+}
+
+/// Gated e2e: convert one PDF page using gpt-4.1-nano + max_tokens.
+///
+/// This is the exact scenario that produced:
+///   "Unsupported parameter: 'max_tokens' is not supported with this model.
+///    Use 'max_completion_tokens' instead."
+/// in edgequake-llm ≤ 0.2.4.  Requires E2E_ENABLED=1 and OPENAI_API_KEY.
+#[tokio::test]
+async fn test_gpt41_nano_max_completion_tokens_regression() {
+    if std::env::var("E2E_ENABLED").is_err() {
+        println!("SKIP — set E2E_ENABLED=1 and OPENAI_API_KEY to run");
+        return;
+    }
+    if std::env::var("OPENAI_API_KEY").is_err() {
+        println!("SKIP — OPENAI_API_KEY not set");
+        return;
+    }
+
+    let pdf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("test_cases")
+        .join("sample.pdf");
+    if !pdf_path.exists() {
+        println!("SKIP — test_cases/sample.pdf not found. Run: make download-test-pdfs");
+        return;
+    }
+
+    // max_tokens must NOT trigger "'max_tokens' is not supported with this
+    // model" from the OpenAI API when using gpt-4.1-nano (issue #13).
+    let config = ConversionConfig::builder()
+        .dpi(150)
+        .concurrency(1)
+        .pages(PageSelection::Single(1))
+        .fidelity(FidelityTier::Tier1)
+        .max_tokens(2048)
+        .build()
+        .expect("config must build");
+
+    let mut cfg = config;
+    cfg.provider_name = Some("openai".to_string());
+    cfg.model = Some("gpt-4.1-nano".to_string());
+
+    let result = convert(&pdf_path.to_string_lossy(), &cfg).await.expect(
+        "gpt-4.1-nano with max_tokens must not return 400 Bad Request (issue #13 regression)",
+    );
+
+    assert!(
+        !result.markdown.trim().is_empty(),
+        "gpt-4.1-nano conversion must produce non-empty Markdown"
+    );
+    assert_eq!(result.stats.processed_pages, 1);
+    println!(
+        "gpt-4.1-nano output ({} chars):\n{}",
+        result.markdown.len(),
+        result.markdown
+    );
+}
+
 /// Requires E2E_ENABLED=1 and MISTRAL_API_KEY to be set.
 #[tokio::test]
 async fn test_mistral_pdf_conversion() {
