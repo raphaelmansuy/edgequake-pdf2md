@@ -286,10 +286,18 @@ pub async fn convert_from_bytes(
 /// - **Mistral**: `pixtral-12b-2409` is the only vision-capable model;
 ///   `mistral-small-latest` (the Mistral SDK default) does **not** support
 ///   image inputs and would error on every page.
+/// - **Ollama**: `llava` is the most universally available vision model on
+///   local Ollama installations. Users can override via `OLLAMA_MODEL` or
+///   `config.model`.
+/// - **LMStudio / lm-studio / lm_studio**: `llava` is a common vision model
+///   that ships with LM Studio's model catalogue. Users can override via
+///   `LMSTUDIO_MODEL` or `config.model`.
 /// - All others fall back to `gpt-4.1-nano` (fast, cheap, vision-capable).
 fn default_vision_model_for_provider(provider_name: &str) -> &'static str {
     match provider_name {
         "mistral" | "mistral-ai" | "mistralai" => "pixtral-12b-2409",
+        "ollama" => "llava",
+        "lmstudio" | "lm-studio" | "lm_studio" => "llava",
         _ => "gpt-4.1-nano",
     }
 }
@@ -540,19 +548,25 @@ mod tests {
 
     #[test]
     fn test_default_vision_model_other_providers() {
-        // All non-Mistral providers fall back to gpt-4.1-nano.
-        for name in &[
-            "openai",
-            "anthropic",
-            "gemini",
-            "ollama",
-            "azure",
-            "unknown",
-        ] {
+        // Cloud providers fall back to gpt-4.1-nano.
+        for name in &["openai", "anthropic", "gemini", "azure", "unknown"] {
             assert_eq!(
                 default_vision_model_for_provider(name),
                 "gpt-4.1-nano",
                 "provider '{}' should default to gpt-4.1-nano",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_default_vision_model_local_providers() {
+        // Local providers use llava as the vision-capable default.
+        for name in &["ollama", "lmstudio", "lm-studio", "lm_studio"] {
+            assert_eq!(
+                default_vision_model_for_provider(name),
+                "llava",
+                "provider '{}' should default to llava (vision-capable local model)",
                 name
             );
         }
