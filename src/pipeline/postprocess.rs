@@ -63,20 +63,20 @@ pub fn clean_markdown(input: &str) -> String {
 /// Strip a single layer of outer Markdown code fences wrapping the entire
 /// output.  Many VLMs disobey "do not wrap in fences" instructions and return:
 ///
-/// ```text
+/// ````text
 /// ```markdown
 /// # Actual content
 /// ```
-/// ```
+/// ````
 ///
 /// The strategy is deliberately lenient:
 ///  - The first line is removed if it is a bare fence opener (```` ``` ```` or
 ///    ```` ```markdown ````).
-///  - The last non-empty line is removed if it is a bare fence closer (``` ``` ```).
+///  - The last non-empty line is removed if it is a bare fence closer (```` ``` ````).
 ///  - If only one of the two is present we still strip it (handles models that
 ///    open but don't close, or vice versa).
 ///  - A second pass handles the degenerate case where the model emits trailing
-///    commentary after the closing fence: we only strip the last ``` ``` ``` line.
+///    commentary after the closing fence: we only strip the last ```` ``` ```` line.
 fn strip_markdown_fences(input: &str) -> String {
     let trimmed = input.trim();
     if trimmed.is_empty() {
