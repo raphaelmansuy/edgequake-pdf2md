@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name    = "edgequake-pdf2md"
-version = "0.4.4"
+version = "0.4.5"
 edition = "2021"
 rust-version = "1.88"
 description  = "Convert PDF documents to Markdown using Vision Language Models — CLI and library"
@@ -47,8 +47,10 @@ pdfium-auto    = { path = "crates/pdfium-auto", version = "0.3" }
 # v0.2.4 adds edgequake-litellm Python bindings (docs bump; no Rust API changes).
 # v0.2.5 fixes issue #13: max_completion_tokens for gpt-4.1-nano / o-series
 #         (async-openai upgraded 0.24→0.33; max_tokens now routes correctly).
-# We pin to "0.2.5" to guarantee gpt-4.1-nano vision extraction works.
-edgequake-llm  = "0.2.5"
+# v0.2.6 fixes vision image forwarding in Ollama, LM Studio, and OpenRouter
+#         providers (Issue #15 — images were silently dropped).
+# We pin to "0.2.6" to guarantee vision works correctly across all providers.
+edgequake-llm  = "0.2.6"
 tokio          = { version = "1", features = ["full"] }
 futures        = "0.3"
 tokio-stream   = "0.1"

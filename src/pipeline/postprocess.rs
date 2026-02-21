@@ -19,10 +19,11 @@
 //!
 //! ## Rule Order
 //!
-//! Rules must run in this specific order: normalise line endings before
-//! trimming, strip fences before heading-spacing so heading detection works
-//! on clean input, and remove image links before the final-newline pass.
-
+/// Rules must run in this specific order: normalise line endings *first* so
+/// that CRLF-returning models (common with local Ollama/LMStudio) are
+/// standardised before the fence-stripping regex runs, strip fences before
+/// heading-spacing so heading detection works on clean input, and remove
+/// image links before the final-newline pass.
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -33,8 +34,9 @@ use regex::Regex;
 /// easy to extend or re-order without side effects.
 ///
 /// Rules (applied in order):
-/// 1. Strip outer markdown fences (models sometimes disobey the prompt)
-/// 2. Normalise line endings (CRLF → LF)
+/// 1. Normalise line endings (CRLF → LF) — must run before fence stripping
+///    so the regex works on both Windows-style and Unix-style model output
+/// 2. Strip outer markdown fences (models sometimes disobey the prompt)
 /// 3. Trim trailing whitespace per line
 /// 4. Collapse 3+ consecutive blank lines down to 2
 /// 5. Ensure heading lines have a blank line before them
@@ -44,8 +46,8 @@ use regex::Regex;
 /// 9. Strip invisible Unicode (zero-width spaces, BOM, soft hyphens, etc.)
 /// 10. Ensure the file ends with exactly one newline
 pub fn clean_markdown(input: &str) -> String {
-    let s = strip_markdown_fences(input);
-    let s = normalise_line_endings(&s);
+    let s = normalise_line_endings(input); // must run before strip_markdown_fences
+    let s = strip_markdown_fences(&s);
     let s = trim_trailing_whitespace(&s);
     let s = collapse_blank_lines(&s);
     let s = normalise_heading_spacing(&s);
@@ -58,18 +60,52 @@ pub fn clean_markdown(input: &str) -> String {
 
 // ── Rule 1: Strip outer markdown fences ──────────────────────────────────────
 
-static RE_OUTER_FENCES: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?s)^```(?:markdown)?\n(.*)\n```\s*$").unwrap());
-
+/// Strip a single layer of outer Markdown code fences wrapping the entire
+/// output.  Many VLMs disobey "do not wrap in fences" instructions and return:
+///
+/// ````text
+/// ```markdown
+/// # Actual content
+/// ```
+/// ````
+///
+/// The strategy is deliberately lenient:
+///  - The first line is removed if it is a bare fence opener (```` ``` ```` or
+///    ```` ```markdown ````).
+///  - The last non-empty line is removed if it is a bare fence closer (```` ``` ````).
+///  - If only one of the two is present we still strip it (handles models that
+///    open but don't close, or vice versa).
+///  - A second pass handles the degenerate case where the model emits trailing
+///    commentary after the closing fence: we only strip the last ```` ``` ```` line.
 fn strip_markdown_fences(input: &str) -> String {
-    if let Some(caps) = RE_OUTER_FENCES.captures(input.trim()) {
-        caps[1].to_string()
-    } else {
-        input.to_string()
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return trimmed.to_string();
     }
-}
 
-// ── Rule 2: Normalise line endings ───────────────────────────────────────────
+    let mut lines: Vec<&str> = trimmed.lines().collect();
+    if lines.is_empty() {
+        return trimmed.to_string();
+    }
+
+    // Strip leading fence opener: ``` or ```<lang>
+    let first = lines[0].trim();
+    if first.starts_with("```") && !first[3..].contains('`') {
+        lines.remove(0);
+    }
+
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    // Strip trailing fence closer: must be exactly ```  (nothing else)
+    let last = lines[lines.len() - 1].trim();
+    if last == "```" {
+        lines.pop();
+    }
+
+    lines.join("\n")
+}
 
 fn normalise_line_endings(input: &str) -> String {
     input.replace("\r\n", "\n").replace('\r', "\n")
@@ -306,6 +342,22 @@ mod tests {
     fn test_no_fences_passthrough() {
         let input = "# Hello\nWorld";
         assert_eq!(strip_markdown_fences(input), "# Hello\nWorld");
+    }
+
+    /// Regression test: local models (Ollama, LMStudio) may return CRLF line
+    /// endings. `clean_markdown` must normalise CRLF → LF *before* stripping
+    /// fence blocks; otherwise the `\n` in the regex never matches `\r\n`.
+    #[test]
+    fn test_strip_fences_crlf_local_model_output() {
+        // Simulate glm-ocr/llava returning CRLF-terminated fenced output
+        let input = "```markdown\r\n# Tax Form 1040\r\nIncome: $50,000\r\n```";
+        let result = clean_markdown(input);
+        assert!(
+            !result.starts_with("```"),
+            "CRLF fences must be stripped; got: {:?}",
+            result
+        );
+        assert!(result.contains("Tax Form"), "Content must be preserved");
     }
 
     #[test]

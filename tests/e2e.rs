@@ -685,3 +685,415 @@ async fn test_mistral_pdf_conversion() {
         result.markdown
     );
 }
+
+// ── Ollama provider e2e tests ─────────────────────────────────────────────────
+
+/// Helper: check if Ollama is reachable at the configured host.
+async fn ollama_is_available() -> bool {
+    let host =
+        std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
+    reqwest::Client::new()
+        .get(format!("{host}/api/tags"))
+        .timeout(std::time::Duration::from_secs(3))
+        .send()
+        .await
+        .is_ok()
+}
+
+/// Gated e2e: convert one PDF page using Ollama with a local vision model.
+///
+/// Requirements:
+/// - `E2E_ENABLED=1`
+/// - Ollama running at `OLLAMA_HOST` (default: http://localhost:11434)
+/// - A vision-capable model pulled: set `OLLAMA_VISION_MODEL` (e.g. `llava`,
+///   `llama3.2-vision:latest`, `gemma3:latest`). Defaults to `llava`.
+///
+/// Run:
+///   E2E_ENABLED=1 OLLAMA_VISION_MODEL=llava cargo test --test e2e test_ollama_pdf_conversion -- --nocapture
+#[tokio::test]
+async fn test_ollama_pdf_conversion() {
+    if std::env::var("E2E_ENABLED").is_err() {
+        println!("SKIP — set E2E_ENABLED=1 to run Ollama e2e tests");
+        return;
+    }
+
+    if !ollama_is_available().await {
+        println!("SKIP — Ollama not reachable (start with: ollama serve)");
+        return;
+    }
+
+    let pdf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("test_cases")
+        .join("irs_form_1040.pdf");
+    if !pdf_path.exists() {
+        println!("SKIP — test_cases/irs_form_1040.pdf not found. Run: make download-test-pdfs");
+        return;
+    }
+
+    let model = std::env::var("OLLAMA_VISION_MODEL").unwrap_or_else(|_| "llava".to_string());
+
+    println!("[ollama] Using model: {model}");
+
+    let config = ConversionConfig::builder()
+        .dpi(96) // lower DPI for faster local inference
+        .concurrency(1)
+        .pages(PageSelection::Single(1))
+        .fidelity(FidelityTier::Tier1)
+        .max_retries(1)
+        .build()
+        .expect("config must build");
+
+    let mut cfg = config;
+    cfg.provider_name = Some("ollama".to_string());
+    cfg.model = Some(model.clone());
+
+    let result = convert(&pdf_path.to_string_lossy(), &cfg)
+        .await
+        .unwrap_or_else(|e| panic!("Ollama conversion failed with model '{model}': {e}"));
+
+    assert!(
+        !result.markdown.trim().is_empty(),
+        "Ollama conversion must produce non-empty Markdown"
+    );
+    assert_eq!(
+        result.stats.processed_pages, 1,
+        "Should have processed exactly 1 page"
+    );
+    assert_eq!(result.stats.failed_pages, 0, "No pages should fail");
+
+    assert_markdown_quality(&result.markdown, "ollama");
+
+    println!(
+        "[ollama] '{model}' output ({} chars):\n{}",
+        result.markdown.len(),
+        result.markdown
+    );
+}
+
+/// Gated e2e: verify Ollama correctly forwards images to vision models.
+///
+/// This is a regression test for edgequake-llm Issue #15, fixed in v0.2.6:
+/// `OllamaMessage` was missing the `images` field, so images were silently
+/// dropped and the model only saw the text prompt (not the PDF page image).
+///
+/// The test converts a 2-page document and checks that both pages yield
+/// non-trivial output — which would fail if images were dropped (the model
+/// would just emit something generic or refuse the request).
+///
+/// Requirements: `E2E_ENABLED=1`, Ollama running, `OLLAMA_VISION_MODEL` set.
+#[tokio::test]
+async fn test_ollama_vision_images_forwarded_regression() {
+    if std::env::var("E2E_ENABLED").is_err() {
+        println!("SKIP — set E2E_ENABLED=1");
+        return;
+    }
+
+    if !ollama_is_available().await {
+        println!("SKIP — Ollama not reachable");
+        return;
+    }
+
+    let pdf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("test_cases")
+        .join("irs_form_1040.pdf");
+    if !pdf_path.exists() {
+        println!("SKIP — test_cases/irs_form_1040.pdf not found. Run: make download-test-pdfs");
+        return;
+    }
+
+    let model = std::env::var("OLLAMA_VISION_MODEL").unwrap_or_else(|_| "llava".to_string());
+
+    let config = ConversionConfig::builder()
+        .dpi(96)
+        .concurrency(1)
+        .pages(PageSelection::Range(1, 2))
+        .fidelity(FidelityTier::Tier1)
+        .max_retries(1)
+        .page_separator(PageSeparator::HorizontalRule)
+        .build()
+        .expect("config must build");
+
+    let mut cfg = config;
+    cfg.provider_name = Some("ollama".to_string());
+    cfg.model = Some(model.clone());
+
+    let result = convert(&pdf_path.to_string_lossy(), &cfg)
+        .await
+        .unwrap_or_else(|e| panic!("Ollama vision regression test failed: {e}"));
+
+    // If images were dropped (pre-fix), Ollama would return generic text.
+    // With images correctly forwarded, the model should mention form fields.
+    assert!(
+        result.stats.processed_pages >= 1,
+        "Should have processed at least 1 page"
+    );
+    assert!(
+        result.stats.failed_pages == 0,
+        "No pages should fail — if images were dropped, the model would reject the request"
+    );
+    assert!(
+        !result.markdown.trim().is_empty(),
+        "Vision output must not be empty (images were silently dropped pre-fix)"
+    );
+
+    println!(
+        "[ollama-vision-regression] '{model}' — {} pages, {} chars",
+        result.stats.processed_pages,
+        result.markdown.len()
+    );
+    println!("Output:\n{}", result.markdown);
+}
+
+/// Structural test (no Ollama needed): verify ConversionConfig accepts
+/// `provider_name = "ollama"` and resolves to the correct default model.
+#[test]
+fn test_ollama_config_uses_llava_as_default_vision_model() {
+    let config = ConversionConfig::builder()
+        .dpi(150)
+        .build()
+        .expect("builder must succeed");
+
+    let mut cfg = config;
+    cfg.provider_name = Some("ollama".to_string());
+
+    // config.model is None → resolve_provider will call
+    // default_vision_model_for_provider("ollama") which must return "llava"
+    // (not "gpt-4.1-nano" which is an OpenAI model and would fail).
+    assert_eq!(cfg.provider_name.as_deref(), Some("ollama"));
+    assert!(
+        cfg.model.is_none(),
+        "model should be None so the default kicks in"
+    );
+}
+
+// ── LM Studio provider e2e tests ──────────────────────────────────────────────
+
+/// Helper: check if LM Studio is reachable at the configured host.
+async fn lmstudio_is_available() -> bool {
+    let host =
+        std::env::var("LMSTUDIO_HOST").unwrap_or_else(|_| "http://localhost:1234".to_string());
+    reqwest::Client::new()
+        .get(format!("{host}/v1/models"))
+        .timeout(std::time::Duration::from_secs(3))
+        .send()
+        .await
+        .is_ok()
+}
+
+/// Gated e2e: convert one PDF page using LM Studio with a local vision model.
+///
+/// Requirements:
+/// - `E2E_ENABLED=1`
+/// - LM Studio running at `LMSTUDIO_HOST` (default: http://localhost:1234)
+/// - A vision-capable model loaded: set `LMSTUDIO_VISION_MODEL` (e.g. `llava`,
+///   `gemma3:latest`). Defaults to `llava`.
+///
+/// Run:
+///   E2E_ENABLED=1 LMSTUDIO_VISION_MODEL=llava cargo test --test e2e test_lmstudio_pdf_conversion -- --nocapture
+#[tokio::test]
+async fn test_lmstudio_pdf_conversion() {
+    if std::env::var("E2E_ENABLED").is_err() {
+        println!("SKIP — set E2E_ENABLED=1 to run LM Studio e2e tests");
+        return;
+    }
+
+    if !lmstudio_is_available().await {
+        println!("SKIP — LM Studio not reachable (start LM Studio and load a vision model)");
+        return;
+    }
+
+    let pdf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("test_cases")
+        .join("irs_form_1040.pdf");
+    if !pdf_path.exists() {
+        println!("SKIP — test_cases/irs_form_1040.pdf not found. Run: make download-test-pdfs");
+        return;
+    }
+
+    let model = std::env::var("LMSTUDIO_VISION_MODEL").unwrap_or_else(|_| "llava".to_string());
+
+    println!("[lmstudio] Using model: {model}");
+
+    let config = ConversionConfig::builder()
+        .dpi(96)
+        .concurrency(1)
+        .pages(PageSelection::Single(1))
+        .fidelity(FidelityTier::Tier1)
+        .max_retries(1)
+        .build()
+        .expect("config must build");
+
+    let mut cfg = config;
+    cfg.provider_name = Some("lmstudio".to_string());
+    cfg.model = Some(model.clone());
+
+    let result = convert(&pdf_path.to_string_lossy(), &cfg)
+        .await
+        .unwrap_or_else(|e| panic!("LM Studio conversion failed with model '{model}': {e}"));
+
+    assert!(
+        !result.markdown.trim().is_empty(),
+        "LM Studio conversion must produce non-empty Markdown"
+    );
+    assert_eq!(
+        result.stats.processed_pages, 1,
+        "Should have processed exactly 1 page"
+    );
+    assert_eq!(result.stats.failed_pages, 0, "No pages should fail");
+
+    assert_markdown_quality(&result.markdown, "lmstudio");
+
+    println!(
+        "[lmstudio] '{model}' output ({} chars):\n{}",
+        result.markdown.len(),
+        result.markdown
+    );
+}
+
+/// Gated e2e: verify LM Studio correctly forwards images via OpenAI-compatible
+/// content-parts array.
+///
+/// This is a regression test for edgequake-llm Issue #15, fixed in v0.2.6:
+/// `LMStudioProvider`'s `ChatMessageRequest.content` was typed as `String`,
+/// making multimodal content-parts impossible. Images were silently discarded.
+///
+/// Requirements: `E2E_ENABLED=1`, LM Studio running, `LMSTUDIO_VISION_MODEL`.
+#[tokio::test]
+async fn test_lmstudio_vision_images_forwarded_regression() {
+    if std::env::var("E2E_ENABLED").is_err() {
+        println!("SKIP — set E2E_ENABLED=1");
+        return;
+    }
+
+    if !lmstudio_is_available().await {
+        println!("SKIP — LM Studio not reachable");
+        return;
+    }
+
+    let pdf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("test_cases")
+        .join("attention_is_all_you_need.pdf");
+    if !pdf_path.exists() {
+        println!("SKIP — test_cases/attention_is_all_you_need.pdf not found. Run: make download-test-pdfs");
+        return;
+    }
+
+    let model = std::env::var("LMSTUDIO_VISION_MODEL").unwrap_or_else(|_| "llava".to_string());
+
+    let config = ConversionConfig::builder()
+        .dpi(96)
+        .concurrency(1)
+        .pages(PageSelection::Single(1))
+        .fidelity(FidelityTier::Tier1)
+        .max_retries(1)
+        .build()
+        .expect("config must build");
+
+    let mut cfg = config;
+    cfg.provider_name = Some("lmstudio".to_string());
+    cfg.model = Some(model.clone());
+
+    let result = convert(&pdf_path.to_string_lossy(), &cfg)
+        .await
+        .unwrap_or_else(|e| {
+            panic!("LM Studio vision regression test failed with model '{model}': {e}")
+        });
+
+    assert!(
+        !result.markdown.trim().is_empty(),
+        "LM Studio vision output must not be empty (images were silently dropped pre-fix)"
+    );
+    assert_eq!(result.stats.processed_pages, 1);
+    assert_eq!(
+        result.stats.failed_pages, 0,
+        "No pages should fail — image forwarding must work"
+    );
+
+    println!(
+        "[lmstudio-vision-regression] '{model}' — {} chars",
+        result.markdown.len()
+    );
+    println!("Output:\n{}", result.markdown);
+}
+
+/// Structural test (no LM Studio needed): verify ConversionConfig accepts
+/// `provider_name = "lmstudio"` and resolves to the correct default model.
+#[test]
+fn test_lmstudio_config_uses_llava_as_default_vision_model() {
+    let config = ConversionConfig::builder()
+        .dpi(150)
+        .build()
+        .expect("builder must succeed");
+
+    let mut cfg = config;
+    cfg.provider_name = Some("lmstudio".to_string());
+
+    assert_eq!(cfg.provider_name.as_deref(), Some("lmstudio"));
+    assert!(
+        cfg.model.is_none(),
+        "model should be None so the default vision model kicks in"
+    );
+}
+
+// ── OpenAI vision e2e tests (v0.2.6 regression guard) ───────────────────────
+
+/// Gated e2e: verify OpenAI vision still works after edgequake-llm v0.2.6.
+///
+/// v0.2.6 fixed a temperature guard (skip temperature=1.0 for o-series) and
+/// improved image forwarding. This test ensures the OpenAI path is unaffected.
+///
+/// Requirements: `E2E_ENABLED=1` and `OPENAI_API_KEY`.
+#[tokio::test]
+async fn test_openai_vision_pdf_conversion_v026_regression() {
+    if std::env::var("E2E_ENABLED").is_err() {
+        println!("SKIP — set E2E_ENABLED=1 and OPENAI_API_KEY to run");
+        return;
+    }
+    if std::env::var("OPENAI_API_KEY").is_err() {
+        println!("SKIP — OPENAI_API_KEY not set");
+        return;
+    }
+
+    let pdf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("test_cases")
+        .join("irs_form_1040.pdf");
+    if !pdf_path.exists() {
+        println!("SKIP — test_cases/irs_form_1040.pdf not found. Run: make download-test-pdfs");
+        return;
+    }
+
+    // Use gpt-4o-mini — cheap, fast, vision-capable, unaffected by 0.2.6 temp fix.
+    let config = ConversionConfig::builder()
+        .dpi(150)
+        .concurrency(1)
+        .pages(PageSelection::Single(1))
+        .fidelity(FidelityTier::Tier1)
+        .max_retries(2)
+        .build()
+        .expect("config must build");
+
+    let mut cfg = config;
+    cfg.provider_name = Some("openai".to_string());
+    cfg.model = Some("gpt-4o-mini".to_string());
+
+    let result = convert(&pdf_path.to_string_lossy(), &cfg)
+        .await
+        .expect("OpenAI gpt-4o-mini vision must succeed (v0.2.6 regression)");
+
+    assert!(
+        !result.markdown.trim().is_empty(),
+        "OpenAI gpt-4o-mini conversion must produce non-empty Markdown"
+    );
+    assert_eq!(result.stats.processed_pages, 1);
+    assert_eq!(result.stats.failed_pages, 0);
+
+    assert_markdown_quality(&result.markdown, "openai-v026-regression");
+
+    println!(
+        "[openai-v026] gpt-4o-mini output ({} chars, {} tokens in / {} out):\n{}",
+        result.markdown.len(),
+        result.stats.total_input_tokens,
+        result.stats.total_output_tokens,
+        result.markdown
+    );
+}

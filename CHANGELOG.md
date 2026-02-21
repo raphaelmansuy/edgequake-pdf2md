@@ -11,6 +11,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.5] — 2026-02-21
+
+### Fixed
+
+- **CRLF line endings break code-fence stripping for local models (Ollama, LM Studio).**
+  `postprocess::clean_markdown` previously ran `strip_markdown_fences` _before_
+  `normalise_line_endings`, so models that return Windows-style `\r\n` output
+  (common with local Ollama/LMStudio models like `glm-ocr:latest`) would fail
+  the outer-fence regex (`\n` never matches `\r\n`) and the entire
+  ```` ```markdown ... ``` ```` block would be left in the output verbatim.
+  Pipeline order fixed: CRLF normalisation now runs first.
+
+- **Fence stripper too strict — extra content after closing ``` breaks match.**
+  The former regex `(?s)^```(?:markdown)?\n(.*)\n```\s*$` required an exact
+  whole-string match. Models that emit trailing commentary after the closing
+  `` ``` `` (e.g. `"``` Additional notes..."`) would not be stripped.
+  Replaced with a lenient line-by-line approach: strip the first line if it is
+  a fence opener, strip the last non-empty line if it is exactly `` ``` ``.
+
+- **`default_vision_model_for_provider` returned `"gpt-4.1-nano"` for Ollama
+  and LMStudio.** When a caller sets `config.provider_name = "ollama"` (or
+  `"lmstudio"`) without an explicit model, the library previously resolved the
+  model to `"gpt-4.1-nano"` — an OpenAI model that Ollama/LMStudio cannot
+  serve. The provider-specific defaults are now `"llava"` for both, matching
+  the CLI help text and Ollama/LMStudio catalogue conventions.
+
+### Changed
+
+- **`edgequake-llm` dependency bumped `0.2.5` → `0.2.6`.**
+  - 0.2.6 fixes vision image forwarding in Ollama, LM Studio, and OpenRouter
+    providers (Issue #15 — images were silently dropped). This makes PDF page
+    image data actually reach local vision models.
+
+### Added
+
+#### New e2e tests for Ollama, LM Studio, and OpenAI (Issue #15 regression guards)
+
+- `test_ollama_pdf_conversion` — converts an IRS Form 1040 PDF page via Ollama
+  using the model in `OLLAMA_VISION_MODEL` (default `llava`). Gated on
+  `E2E_ENABLED=1` and Ollama running at `OLLAMA_HOST` (default
+  `http://localhost:11434`).
+
+- `test_ollama_vision_images_forwarded_regression` — converts two pages of a
+  tax form via Ollama and asserts non-empty output on every page. A pre-fix
+  Ollama provider would silently drop images and the model would return generic
+  text or refuse the request.
+
+- `test_ollama_config_uses_llava_as_default_vision_model` — always-run
+  structural test: `provider_name = "ollama"` with no `model` field must not
+  resolve to `"gpt-4.1-nano"`.
+
+- `test_lmstudio_pdf_conversion` — converts an IRS Form 1040 PDF page via LM
+  Studio using the model in `LMSTUDIO_VISION_MODEL` (default `llava`). Gated
+  on `E2E_ENABLED=1` and LM Studio running at `LMSTUDIO_HOST`.
+
+- `test_lmstudio_vision_images_forwarded_regression` — same image-forwarding
+  guard for LM Studio (Attention paper, page 1).
+
+- `test_lmstudio_config_uses_llava_as_default_vision_model` — always-run
+  structural test: `provider_name = "lmstudio"` with no `model` field must not
+  resolve to an incompatible cloud model.
+
+- `test_openai_vision_pdf_conversion_v026_regression` — converts an IRS Form
+  1040 PDF page via OpenAI `gpt-4o-mini`. Gated on `E2E_ENABLED=1` and
+  `OPENAI_API_KEY`. Verifies the OpenAI path is unaffected by the 0.2.6
+  temperature guard change.
+
+- `test_strip_fences_crlf_local_model_output` — unit test: confirms that
+  `clean_markdown` correctly strips ```` ```markdown\r\n...\r\n``` ```` fences
+  from CRLF-formatted model output.
+
+---
+
 ## [0.4.4] — 2026-02-20
 
 ### Fixed
