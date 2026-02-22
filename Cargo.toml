@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name    = "edgequake-pdf2md"
-version = "0.4.5"
+version = "0.4.6"
 edition = "2021"
 rust-version = "1.88"
 description  = "Convert PDF documents to Markdown using Vision Language Models — CLI and library"
@@ -49,8 +49,13 @@ pdfium-auto    = { path = "crates/pdfium-auto", version = "0.3" }
 #         (async-openai upgraded 0.24→0.33; max_tokens now routes correctly).
 # v0.2.6 fixes vision image forwarding in Ollama, LM Studio, and OpenRouter
 #         providers (Issue #15 — images were silently dropped).
-# We pin to "0.2.6" to guarantee vision works correctly across all providers.
-edgequake-llm  = "0.2.6"
+# v0.2.7 rewrites Azure OpenAI to use the async-openai AzureConfig type,
+#         adds ImageData::from_url / is_url / to_api_url URL-native helpers,
+#         adds content-filter guardrail (finish_reason="content_filter" →
+#         LlmError::ApiError), and adds ProviderFactory Azure auto-detection.
+#         edgequake-litellm 0.1.3 adds azure provider to list_providers().
+# We pin to "0.2.7" to gain native Azure vision + URL image pass-through.
+edgequake-llm  = "0.2.7"
 tokio          = { version = "1", features = ["full"] }
 futures        = "0.3"
 tokio-stream   = "0.1"

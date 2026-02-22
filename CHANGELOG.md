@@ -11,6 +11,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.6] — 2026-02-22
+
+### Changed
+
+- **`edgequake-llm` dependency bumped `0.2.6` → `0.2.7`.**
+  - 0.2.7 rewrites the Azure OpenAI provider to use the `async-openai`
+    `AzureConfig` trait instead of hand-rolled HTTP, eliminating ~400 lines of
+    bespoke request building.
+  - New `AzureOpenAIProvider::from_env_contentgen()` reads the enterprise
+    `AZURE_OPENAI_CONTENTGEN_*` naming scheme; `from_env_auto()` tries
+    CONTENTGEN first and falls back to standard `AZURE_OPENAI_*` transparently.
+  - `AzureOpenAIProvider::with_deployment(name)` — builder method for runtime
+    deployment switching (mirrors `with_embedding_deployment()`).
+  - `ImageData::from_url(url)`, `is_url() -> bool`, `to_api_url() -> String`
+    URL-native helpers: OpenAI and Azure providers now pass URL images directly
+    to the API without unnecessary base64 wrapping.
+  - Content-filter guardrail: responses with `finish_reason = "content_filter"`
+    are surfaced as `LlmError::ApiError` with a descriptive message.
+  - `ProviderFactory::from_env()` auto-detects Azure when
+    `AZURE_OPENAI_CONTENTGEN_API_KEY` (or `AZURE_OPENAI_API_KEY`) plus endpoint
+    are set; `ProviderType::AzureOpenAI` variant recognised from `"azure"`,
+    `"azure-openai"`, `"azure_openai"`, `"azureopenai"` (case-insensitive).
+  - 25-test Azure E2E suite covering chat, JSON mode, streaming, tool calling,
+    vision (base64 and URL images, detail levels), embeddings, and
+    content-filter scenarios.
+  - `OpenAIProvider::from_env()` — new constructor with dotenvy (.env file)
+    support; `supports_json_mode()` extended to cover `gpt-5` prefix.
+
+- **`edgequake-litellm` Python package updated `0.1.2` → `0.1.3`.**
+  - `"azure"` provider added to `list_providers()`.
+  - Callers can now pass `model="azure/<deployment-name>"` to route to Azure
+    OpenAI from Python.
+
+### Added
+
+- **`docs/providers.md` Azure OpenAI section** expanded: 3-constructor table
+  (`from_env`, `from_env_contentgen`, `from_env_auto`), CONTENTGEN env-var
+  reference, runtime deployment switching, vision support note, and reliable
+  Azure sample image URLs.
+
+---
+
 ## [0.4.5] — 2026-02-21
 
 ### Fixed
