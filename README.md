@@ -328,10 +328,12 @@ make inspect-all    # Inspect test PDFs
 | Crate | Purpose |
 |-------|---------|
 | [pdfium-render](https://crates.io/crates/pdfium-render) | PDF rasterisation via Google's pdfium C++ library |
-| [edgequake-llm](https://crates.io/crates/edgequake-llm) | Multi-provider LLM abstraction (OpenAI, Anthropic, Gemini, etc.) |
+| [edgequake-llm](https://crates.io/crates/edgequake-llm) | Multi-provider LLM abstraction (OpenAI, Anthropic, Gemini, Azure, Ollama, etc.) — v0.2.7+ |
 | [tokio](https://crates.io/crates/tokio) | Async runtime |
 | [image](https://crates.io/crates/image) | Image encoding (PNG/JPEG) |
 | [clap](https://crates.io/crates/clap) | CLI argument parsing |
+
+> **Python users:** `edgequake-litellm` v0.1.3 ([PyPI](https://pypi.org/project/edgequake-litellm/)) is a drop-in LiteLLM replacement backed by `edgequake-llm`. It supports Azure OpenAI via `model="azure/<deployment>"`.
 
 ## External References
 
