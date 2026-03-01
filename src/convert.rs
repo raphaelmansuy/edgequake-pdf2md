@@ -178,41 +178,90 @@ pub async fn convert(
 
 /// Convert a PDF and write output directly to a file.
 ///
-/// Uses atomic write (temp file + rename) to prevent partial files.
+/// Overwrites any existing file at `output_path`. Uses atomic write
+/// (temp file in the same directory + rename) to prevent partial files
+/// on crash. Falls back to a direct truncating write if the rename fails
+/// (e.g. cross-device, permission, or filesystem edge cases).
+///
+/// Fixes: <https://github.com/raphaelmansuy/edgequake-pdf2md/issues/13>
 pub async fn convert_to_file(
     input_str: impl AsRef<str>,
     output_path: impl AsRef<Path>,
     config: &ConversionConfig,
 ) -> Result<ConversionStats, Pdf2MdError> {
     let output = convert(input_str, config).await?;
-    let path = output_path.as_ref();
+    write_markdown_to_file(output_path.as_ref(), &output.markdown).await?;
+    Ok(output.stats)
+}
 
-    // Atomic write: write to temp, then rename
+/// Write markdown content to a file, overwriting if it already exists.
+///
+/// Uses atomic write (temp file + rename) with a direct-write fallback.
+/// The temp file is created in the same directory as `path` to ensure the
+/// rename stays on the same filesystem.
+///
+/// This is `pub(crate)` so it can be unit-tested without an LLM.
+pub(crate) async fn write_markdown_to_file(path: &Path, content: &str) -> Result<(), Pdf2MdError> {
+    // Ensure parent directory exists.
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| Pdf2MdError::OutputWriteFailed {
-                path: path.to_path_buf(),
-                source: e,
+        if !parent.as_os_str().is_empty() {
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                Pdf2MdError::OutputWriteFailed {
+                    path: path.to_path_buf(),
+                    source: e,
+                }
             })?;
+        }
     }
 
-    let tmp_path = path.with_extension("md.tmp");
-    tokio::fs::write(&tmp_path, &output.markdown)
+    // Log when overwriting an existing file.
+    if path.exists() {
+        info!("Overwriting existing output file: {}", path.display());
+    }
+
+    // Build temp path in the SAME directory as the target to ensure rename
+    // stays on the same filesystem / mount. Suffix with PID + ".tmp" to
+    // avoid collisions.
+    let tmp_name = format!(
+        ".{}.{}.tmp",
+        path.file_name().unwrap_or_default().to_string_lossy(),
+        std::process::id()
+    );
+    let tmp_path = path.with_file_name(&tmp_name);
+
+    // Write content to temp file.
+    tokio::fs::write(&tmp_path, content)
         .await
         .map_err(|e| Pdf2MdError::OutputWriteFailed {
             path: path.to_path_buf(),
             source: e,
         })?;
 
-    tokio::fs::rename(&tmp_path, path)
-        .await
-        .map_err(|e| Pdf2MdError::OutputWriteFailed {
-            path: path.to_path_buf(),
-            source: e,
-        })?;
+    // Atomic rename: on POSIX this replaces the destination atomically.
+    // If rename fails (cross-device, extended-attributes, etc.) fall back
+    // to a direct truncating write so the output is never silently lost.
+    match tokio::fs::rename(&tmp_path, path).await {
+        Ok(()) => {
+            debug!("Atomic rename succeeded: {} → {}", tmp_name, path.display());
+        }
+        Err(rename_err) => {
+            debug!(
+                "Atomic rename failed ({}), falling back to direct write",
+                rename_err
+            );
+            // Direct truncating write — creates or overwrites the file.
+            tokio::fs::write(path, content)
+                .await
+                .map_err(|e| Pdf2MdError::OutputWriteFailed {
+                    path: path.to_path_buf(),
+                    source: e,
+                })?;
+            // Best-effort cleanup of the temp file.
+            tokio::fs::remove_file(&tmp_path).await.ok();
+        }
+    }
 
-    Ok(output.stats)
+    Ok(())
 }
 
 /// Synchronous wrapper around [`convert`].
@@ -567,6 +616,116 @@ fn format_yaml_front_matter(meta: &DocumentMetadata) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── write_markdown_to_file tests (Issue #13) ─────────────────────────
+
+    #[tokio::test]
+    async fn test_write_creates_new_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("output.md");
+        assert!(!path.exists());
+
+        write_markdown_to_file(&path, "# Hello\n").await.unwrap();
+
+        assert!(path.exists());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# Hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_write_overwrites_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("paper.md");
+
+        // First write
+        std::fs::write(&path, "old content from first run").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "old content from first run"
+        );
+
+        // Second write must overwrite
+        write_markdown_to_file(&path, "new content from second run\n")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "new content from second run\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_write_overwrites_larger_file_with_smaller() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("output.md");
+
+        // Write a large file first
+        let large = "x".repeat(10_000);
+        std::fs::write(&path, &large).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap().len(), 10_000);
+
+        // Overwrite with smaller content
+        write_markdown_to_file(&path, "small\n").await.unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "small\n");
+        assert_eq!(content.len(), 6);
+    }
+
+    #[tokio::test]
+    async fn test_write_creates_parent_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sub").join("dir").join("output.md");
+        assert!(!path.parent().unwrap().exists());
+
+        write_markdown_to_file(&path, "# Nested\n").await.unwrap();
+
+        assert!(path.exists());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# Nested\n");
+    }
+
+    #[tokio::test]
+    async fn test_write_no_leftover_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("output.md");
+
+        write_markdown_to_file(&path, "# Clean\n").await.unwrap();
+
+        // No .tmp files should remain in the directory
+        let entries: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(
+            entries.is_empty(),
+            "Temp files should be cleaned up, found: {:?}",
+            entries.iter().map(|e| e.file_name()).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_write_empty_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.md");
+
+        write_markdown_to_file(&path, "").await.unwrap();
+
+        assert!(path.exists());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+    }
+
+    #[tokio::test]
+    async fn test_write_overwrites_multiple_times() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("multi.md");
+
+        for i in 0..5 {
+            let content = format!("# Version {i}\n");
+            write_markdown_to_file(&path, &content).await.unwrap();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
+        }
+    }
 
     #[test]
     fn test_default_vision_model_mistral_variants() {

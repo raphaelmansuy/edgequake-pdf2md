@@ -540,6 +540,10 @@ async fn main() -> Result<()> {
             .context("Conversion failed")?;
 
         // Summary line (callback already printed the per-page log).
+        // Show the absolute path so users know exactly where the file landed,
+        // even when running from a different CWD than expected (issue #13).
+        let display_path =
+            std::fs::canonicalize(output_path).unwrap_or_else(|_| output_path.clone());
         if !cli.quiet {
             let selected = stats.processed_pages + stats.failed_pages + stats.skipped_pages;
             eprintln!(
@@ -552,7 +556,7 @@ async fn main() -> Result<()> {
                 stats.processed_pages,
                 selected,
                 stats.total_duration_ms,
-                bold(&output_path.display().to_string()),
+                bold(&display_path.display().to_string()),
             );
             eprintln!(
                 "   {} tokens in  /  {} tokens out",

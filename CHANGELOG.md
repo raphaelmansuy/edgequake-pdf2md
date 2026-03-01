@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.1] — 2026-03-01
+
+### Fixed
+
+- **CLI fails to overwrite existing output `.md` file** (Issue #13).
+  `convert_to_file()` now uses a temp file in the **same directory** as the
+  target (avoiding cross-device rename failures) and falls back to a direct
+  truncating write if the atomic rename fails for any reason (extended
+  attributes, APFS edge cases, permissions).
+- CLI summary line now shows the **absolute path** to the output file via
+  `std::fs::canonicalize()`, so users always know exactly where the file was
+  written.
+
+### Added
+
+- `write_markdown_to_file()` extracted as a testable `pub(crate)` helper.
+- Seven new unit tests covering: create new, overwrite existing, overwrite
+  larger-with-smaller, nested directory creation, no leftover temp files,
+  empty content, and repeated overwrites.
+
+---
+
 ## [0.6.0] — 2026-03-01
 
 ### Changed
