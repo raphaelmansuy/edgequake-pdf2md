@@ -11,6 +11,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.0] — 2026-03-01
+
+### Changed
+
+- **Default provider switched to AWS Bedrock** with `amazon.nova-lite-v1:0`.
+  Bedrock is now the first provider checked in the auto-detection chain when
+  `AWS_ACCESS_KEY_ID` is set. The model costs $0.06/$0.24 per 1M tokens
+  (input/output), making it the cheapest vision-capable option. Inference
+  profile auto-resolution ensures it works across all AWS regions (e.g.
+  `eu-west-1`, `us-east-1`) without manual model-ID prefixing.
+
+- **MSRV bumped `1.88` → `1.91`** to satisfy AWS SDK crate requirements
+  (`aws-sdk-bedrockruntime ≥ 1.126.0` requires Rust 1.91).
+
+- **`edgequake-llm` dependency bumped `0.2.7` → `0.3.0`** with `bedrock`
+  feature enabled.
+  - v0.3.0 adds native AWS Bedrock provider (Converse API) with 12 model
+    families, 30+ models, native embedding support, and cross-region inference
+    profile auto-resolution.
+  - Fixes reasoning model false positives for Qwen3-VL and Qwen3-VL-Embedding
+    (Issue edgequake-llm#19). `is_reasoning_model()` no longer matches non-
+    reasoning Qwen3 variants.
+  - Factory `block_on` panic fix: `tokio::task::block_in_place()` used in all
+    factory methods, preventing panics within `#[tokio::test]` contexts.
+
+### Added
+
+- **Bedrock provider auto-detection** in `resolve_provider()`. When
+  `AWS_ACCESS_KEY_ID` is set, Bedrock is selected as the default provider with
+  `amazon.nova-lite-v1:0` as the vision model.
+- `bedrock` entry in `default_vision_model_for_provider()` mapping
+  `"bedrock" | "aws-bedrock" | "aws_bedrock"` → `"amazon.nova-lite-v1:0"`.
+- CLI: Bedrock added to the `SUPPORTED PROVIDERS & MODELS` table, cost
+  estimates updated, `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` /
+  `AWS_REGION` added to `ENVIRONMENT VARIABLES` section.
+- README: Quick Start updated with AWS credential setup, providers table
+  includes Bedrock as default, library usage example uses Bedrock.
+
+---
+
 ## [0.5.0] — 2026-03-01
 
 ### Changed

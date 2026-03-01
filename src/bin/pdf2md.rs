@@ -187,7 +187,7 @@ impl ConversionProgressCallback for CliProgressCallback {
 }
 
 const AFTER_HELP: &str = r#"EXAMPLES:
-  # Basic conversion (stdout)
+  # Basic conversion (stdout) — uses AWS Bedrock by default
   pdf2md document.pdf
 
   # Convert to file
@@ -198,6 +198,9 @@ const AFTER_HELP: &str = r#"EXAMPLES:
 
   # Use a specific model
   pdf2md --model gpt-4.1 --provider openai document.pdf
+
+  # Use AWS Bedrock with a different model
+  pdf2md --provider bedrock --model amazon.nova-pro-v1:0 document.pdf
 
   # Use Mistral (pixtral-12b-2409 auto-selected as the vision model)
   export MISTRAL_API_KEY=your-key
@@ -216,41 +219,50 @@ const AFTER_HELP: &str = r#"EXAMPLES:
   pdf2md --json --metadata document.pdf > output.json
 
 SUPPORTED PROVIDERS & MODELS:
-  Provider     Model                  Input $/1M  Output $/1M  Vision
-  ─────────    ─────────────────────  ──────────  ───────────  ──────
-  openai       gpt-4.1-nano (default) $0.10       $0.40        ✓
-  openai       gpt-4.1-mini           $0.40       $1.60        ✓
-  openai       gpt-4.1                $2.00       $8.00        ✓
-  openai       gpt-4o                 $2.50       $10.00       ✓
-  anthropic    claude-sonnet-4-20250514         $3.00       $15.00       ✓
-  anthropic    claude-haiku-4-20250514          $0.80       $4.00        ✓
-  gemini       gemini-2.0-flash       $0.10       $0.40        ✓
-  gemini       gemini-2.5-pro         $1.25       $10.00       ✓
-  mistral      pixtral-12b-2409       $0.15       $0.15        ✓
-  ollama       llava, llama3.2-vision free        free         ✓
+  Provider     Model                       Input $/1M  Output $/1M  Vision
+  ─────────    ─────────────────────────    ──────────  ───────────  ──────
+  bedrock      amazon.nova-lite-v1:0 (def)  $0.06       $0.24        ✓
+  bedrock      amazon.nova-pro-v1:0         $0.80       $3.20        ✓
+  openai       gpt-4.1-nano                 $0.10       $0.40        ✓
+  openai       gpt-4.1-mini                 $0.40       $1.60        ✓
+  openai       gpt-4.1                      $2.00       $8.00        ✓
+  openai       gpt-4o                       $2.50       $10.00       ✓
+  anthropic    claude-sonnet-4-20250514      $3.00       $15.00       ✓
+  anthropic    claude-haiku-4-20250514       $0.80       $4.00        ✓
+  gemini       gemini-2.0-flash             $0.10       $0.40        ✓
+  gemini       gemini-2.5-pro               $1.25       $10.00       ✓
+  mistral      pixtral-12b-2409             $0.15       $0.15        ✓
+  ollama       llava, llama3.2-vision       free        free         ✓
 
 COST ESTIMATE (50-page document @ 150 DPI):
   ~1,500 input tokens/page × 50 pages = 75K input tokens
   ~800 output tokens/page × 50 pages = 40K output tokens
 
-  gpt-4.1-nano:  ~$0.02 total
-  gpt-4.1-mini:  ~$0.09 total
-  gpt-4.1:       ~$0.47 total
-  claude-sonnet-4-20250514: ~$0.83 total
+  amazon.nova-lite-v1:0: ~$0.01 total (default)
+  gpt-4.1-nano:          ~$0.02 total
+  gpt-4.1-mini:          ~$0.09 total
+  gpt-4.1:               ~$0.47 total
+  claude-sonnet-4-20250514:        ~$0.83 total
 
 ENVIRONMENT VARIABLES:
+  AWS_ACCESS_KEY_ID       AWS access key (Bedrock — default provider)
+  AWS_SECRET_ACCESS_KEY   AWS secret key (Bedrock)
+  AWS_REGION              AWS region (default: us-east-1; recommended: eu-west-1)
   OPENAI_API_KEY          OpenAI API key
   ANTHROPIC_API_KEY       Anthropic API key
   GEMINI_API_KEY          Google Gemini API key
   MISTRAL_API_KEY         Mistral AI API key (uses pixtral-12b-2409 for vision)
-  EDGEQUAKE_LLM_PROVIDER  Override provider (openai, anthropic, gemini, mistral, ollama)
+  EDGEQUAKE_LLM_PROVIDER  Override provider (bedrock, openai, anthropic, gemini, mistral, ollama)
   EDGEQUAKE_MODEL         Override model ID
   PDFIUM_LIB_PATH         Path to an existing libpdfium — skips auto-download
   PDFIUM_AUTO_CACHE_DIR   Override the default pdfium cache directory
 
 SETUP:
-  1. Set API key:     export OPENAI_API_KEY=sk-...
-  2. Convert:         pdf2md document.pdf -o output.md
+  1. Set AWS credentials: export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
+     Optional region:     export AWS_REGION=eu-west-1
+  2. Convert:             pdf2md document.pdf -o output.md
+
+  Alternative: export OPENAI_API_KEY=sk-... (or any other provider key)
 
   PDFium (~30 MB) is downloaded automatically on first run and cached in
   ~/.cache/pdf2md/pdfium-7690/. No manual library setup is required.
@@ -264,8 +276,8 @@ SETUP:
     version,
     about = "Convert PDF files and URLs to Markdown using Vision LLMs",
     long_about = "Convert PDF documents (local files or URLs) to clean, well-structured Markdown \
-using Vision Language Models. Supports OpenAI, Anthropic, Google Gemini, Azure OpenAI, and \
-any OpenAI-compatible endpoint (Ollama, vLLM, LiteLLM, etc.).",
+using Vision Language Models. Supports AWS Bedrock (default), OpenAI, Anthropic, Google Gemini, \
+Azure OpenAI, Mistral AI, and any OpenAI-compatible endpoint (Ollama, vLLM, LiteLLM, etc.).",
     arg_required_else_help = true,
     color = clap::ColorChoice::Auto,
     after_long_help = AFTER_HELP
@@ -278,21 +290,22 @@ struct Cli {
     #[arg(short, long, env = "PDF2MD_OUTPUT")]
     output: Option<PathBuf>,
 
-    /// LLM model ID (e.g. gpt-4.1-nano, gpt-4.1, claude-sonnet-4-20250514).
+    /// LLM model ID (e.g. amazon.nova-lite-v1:0, gpt-4.1-nano, claude-sonnet-4-20250514).
     #[arg(
         long,
         env = "EDGEQUAKE_MODEL",
-        long_help = "Vision LLM model to use. Default: gpt-4.1-nano ($0.10/$0.40 per 1M tokens).\n\
-          Popular choices: gpt-4.1-mini ($0.40/$1.60), gpt-4.1 ($2/$8), claude-sonnet-4-20250514 ($3/$15)."
+        long_help = "Vision LLM model to use. Default: amazon.nova-lite-v1:0 ($0.06/$0.24 per 1M tokens).\n\
+          Popular choices: gpt-4.1-nano ($0.10/$0.40), gpt-4.1-mini ($0.40/$1.60), claude-sonnet-4-20250514 ($3/$15)."
     )]
     model: Option<String>,
 
-    /// LLM provider: openai, anthropic, gemini, ollama, azure.
+    /// LLM provider: bedrock, openai, anthropic, gemini, ollama, azure.
     #[arg(
         long,
         env = "EDGEQUAKE_PROVIDER",
         long_help = "LLM provider. Auto-detected from API key env vars if not set.\n\
-          Supported: openai, anthropic, gemini, azure, ollama, or any OpenAI-compatible URL."
+          Default: bedrock (AWS). Supported: bedrock, openai, anthropic, gemini, azure, \n\
+          mistral, ollama, or any OpenAI-compatible URL."
     )]
     provider: Option<String>,
 

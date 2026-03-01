@@ -18,7 +18,7 @@
 //!  ├─ 1. Input   resolve local file or download from URL
 //!  ├─ 2. Render  rasterise pages via pdfium (CPU-bound, spawn_blocking)
 //!  ├─ 3. Encode  PNG → base64 ImageData
-//!  ├─ 4. VLM     concurrent calls to gpt-4.1-nano / claude / gemini / …
+//!  ├─ 4. VLM     concurrent calls to amazon.nova-lite / gpt-4.1-nano / claude / …
 //!  ├─ 5. Polish  10-rule post-processing (fences, tables, whitespace)
 //!  └─ 6. Output  assembled Markdown + per-page stats
 //! ```
@@ -30,7 +30,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Provider auto-detected from OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY
+//!     // Provider auto-detected from AWS_ACCESS_KEY_ID / OPENAI_API_KEY / ANTHROPIC_API_KEY
 //!     let config = ConversionConfig::default();
 //!     let output = convert("document.pdf", &config).await?;
 //!     println!("{}", output.markdown);
@@ -56,13 +56,14 @@
 //!
 //! | Model | $/1M tokens | Quality | Best for |
 //! |-------|------------|---------|----------|
-//! | `gpt-4.1-nano` | $0.10/$0.40 | ★★★ | Default — fast, cheap |
+//! | `amazon.nova-lite-v1:0` | $0.06/$0.24 | ★★★ | Default — fast, cheapest |
+//! | `gpt-4.1-nano` | $0.10/$0.40 | ★★★ | Fast, cheap (OpenAI) |
 //! | `gpt-4.1-mini` | $0.40/$1.60 | ★★★★ | Balance |
 //! | `gpt-4.1`      | $2.00/$8.00 | ★★★★★ | Highest accuracy |
 //! | `claude-sonnet-4-20250514` | $3.00/$15.00 | ★★★★★ | Tables, complex layouts |
 //! | `gemini-2.0-flash` | $0.10/$0.40 | ★★★ | Alternative cheap option |
 //!
-//! A 50-page document costs roughly **$0.02** with `gpt-4.1-nano`.
+//! A 50-page document costs roughly **$0.01** with `amazon.nova-lite-v1:0`.
 
 // ── Modules ──────────────────────────────────────────────────────────────
 

@@ -281,6 +281,8 @@ pub async fn convert_from_bytes(
 ///
 /// For most providers the caller's model choice is respected; this function
 /// only matters when no model is supplied by the user.
+/// - **Bedrock**: `amazon.nova-lite-v1:0` is the default vision-capable model;
+///   works across all regions via cross-region inference profile auto-resolution.
 /// - **Mistral**: `pixtral-12b-2409` is the only vision-capable model;
 ///   `mistral-small-latest` (the Mistral SDK default) does **not** support
 ///   image inputs and would error on every page.
@@ -293,6 +295,7 @@ pub async fn convert_from_bytes(
 /// - All others fall back to `gpt-4.1-nano` (fast, cheap, vision-capable).
 fn default_vision_model_for_provider(provider_name: &str) -> &'static str {
     match provider_name {
+        "bedrock" | "aws-bedrock" | "aws_bedrock" => "amazon.nova-lite-v1:0",
         "mistral" | "mistral-ai" | "mistralai" => "pixtral-12b-2409",
         "ollama" => "llava",
         "lmstudio" | "lm-studio" | "lm_studio" => "llava",
@@ -366,6 +369,17 @@ async fn resolve_provider(config: &ConversionConfig) -> Result<Arc<dyn LLMProvid
         }
     }
 
+    // Prefer AWS Bedrock when AWS credentials are available. This is the
+    // default provider for pdf2md v0.6+. The amazon.nova-lite-v1:0 model is
+    // vision-capable, works across all regions (via inference profile
+    // auto-resolution), and is cost-effective ($0.06/$0.24 per 1M tokens).
+    if let Ok(aws_key) = std::env::var("AWS_ACCESS_KEY_ID") {
+        if !aws_key.is_empty() {
+            let model = config.model.as_deref().unwrap_or("amazon.nova-lite-v1:0");
+            return create_vision_provider("bedrock", model);
+        }
+    }
+
     // Prefer OpenAI explicitly when an OpenAI API key is present. This ensures
     // users with multiple provider keys (e.g. Gemini + OpenAI) will default
     // to OpenAI unless they explicitly request another provider.
@@ -391,7 +405,8 @@ async fn resolve_provider(config: &ConversionConfig) -> Result<Arc<dyn LLMProvid
             provider: "auto".to_string(),
             hint: format!(
                 "No LLM provider could be auto-detected from environment.\n\
-                Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or configure a provider.\n\
+                Set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY (Bedrock, recommended),\n\
+                OPENAI_API_KEY, ANTHROPIC_API_KEY, or configure a provider.\n\
                 Error: {}",
                 e
             ),

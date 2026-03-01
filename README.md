@@ -18,7 +18,7 @@ Inspired by [pyzerox](https://github.com/getomni-ai/zerox), rebuilt in Rust for 
 
 ## Features
 
-- **Multi-provider** — OpenAI, Anthropic, Google Gemini, Mistral AI, Azure, Ollama, or any OpenAI-compatible endpoint
+- **Multi-provider** — AWS Bedrock (default), OpenAI, Anthropic, Google Gemini, Mistral AI, Azure, Ollama, or any OpenAI-compatible endpoint
 - **Fast** — concurrent page processing with configurable parallelism
 - **Accurate** — 10-rule post-processing pipeline fixes tables, removes hallucinations, normalises output
 - **Flexible** — page selection, fidelity tiers, custom system prompts, streaming API
@@ -38,10 +38,15 @@ Inspired by [pyzerox](https://github.com/getomni-ai/zerox), rebuilt in Rust for 
 > `~/.cargo/pdfium-bundle/`. Use `PDFIUM_LIB_PATH` to point to an existing copy
 > at runtime (download mode, without `bundled` feature).
 
-### 1. Set an API key
+### 1. Set credentials
 
 ```bash
-export OPENAI_API_KEY="sk-..."    # OpenAI (recommended)
+# AWS Bedrock (recommended — cheapest, default provider)
+export AWS_ACCESS_KEY_ID="AKIA..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_REGION="eu-west-1"        # optional, default: us-east-1
+# or
+export OPENAI_API_KEY="sk-..."       # OpenAI
 # or
 export ANTHROPIC_API_KEY="sk-ant-..."  # Anthropic
 # or
@@ -90,20 +95,23 @@ See [docs/how-it-works.md](docs/how-it-works.md) for the full pipeline walkthrou
 ## Usage
 
 ```bash
-# Basic conversion
+# Basic conversion (uses AWS Bedrock by default)
 pdf2md document.pdf -o output.md
 
 # Specific pages
 pdf2md --pages 1-5 document.pdf -o first_five.md
 
 # High fidelity with a better model
-pdf2md --fidelity tier3 --model gpt-4.1 --dpi 200 paper.pdf -o paper.md
+pdf2md --fidelity tier3 --model gpt-4.1 --provider openai --dpi 200 paper.pdf -o paper.md
 
 # Consistent formatting across pages (sequential mode)
 pdf2md --maintain-format --separator hr book.pdf -o book.md
 
 # JSON output with metadata
 pdf2md --json --metadata document.pdf > output.json
+
+# Use a different Bedrock model
+pdf2md --provider bedrock --model amazon.nova-pro-v1:0 document.pdf
 
 # Use Anthropic
 pdf2md --provider anthropic --model claude-sonnet-4-20250514 document.pdf
@@ -126,7 +134,9 @@ See [docs/examples.md](docs/examples.md) for more usage patterns.
 
 | Provider | Model | Input $/1M | Output $/1M | Vision |
 |----------|-------|-----------|-------------|--------|
-| **OpenAI** | gpt-4.1-nano *(default)* | $0.10 | $0.40 | ✓ |
+| **Bedrock** | amazon.nova-lite-v1:0 *(default)* | $0.06 | $0.24 | ✓ |
+| **Bedrock** | amazon.nova-pro-v1:0 | $0.80 | $3.20 | ✓ |
+| **OpenAI** | gpt-4.1-nano | $0.10 | $0.40 | ✓ |
 | **OpenAI** | gpt-4.1-mini | $0.40 | $1.60 | ✓ |
 | **OpenAI** | gpt-4.1 | $2.00 | $8.00 | ✓ |
 | **Anthropic** | claude-sonnet-4-20250514 | $3.00 | $15.00 | ✓ |
@@ -136,7 +146,7 @@ See [docs/examples.md](docs/examples.md) for more usage patterns.
 | **Mistral** | pixtral-12b-2409 | $0.15 | $0.15 | ✓ |
 | **Ollama** | llava, llama3.2-vision | free | free | ✓ |
 
-**Cost estimate:** A 50-page document costs ~$0.02 with gpt-4.1-nano, ~$0.09 with gpt-4.1-mini.
+**Cost estimate:** A 50-page document costs ~$0.01 with amazon.nova-lite-v1:0, ~$0.02 with gpt-4.1-nano.
 
 See [docs/providers.md](docs/providers.md) for detailed comparisons, cost calculators, and selection guide.
 
@@ -146,7 +156,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-edgequake-pdf2md = "0.4"
+edgequake-pdf2md = "0.6"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -158,8 +168,8 @@ use edgequake_pdf2md::{convert, ConversionConfig};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ConversionConfig::builder()
-        .model("gpt-4.1-nano")
-        .provider_name("openai")
+        .model("amazon.nova-lite-v1:0")
+        .provider_name("bedrock")
         .pages(edgequake_pdf2md::PageSelection::Range(1, 5))
         .build()?;
 
@@ -264,7 +274,7 @@ Provider resolution order (highest-to-lowest priority):
 1. `config.provider` — explicit `Arc<dyn LLMProvider>` injection
 2. `config.provider_name` + `config.model` — named provider
 3. `EDGEQUAKE_LLM_PROVIDER` + `EDGEQUAKE_MODEL` environment variables
-4. Auto-detect from API key env vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`, …)
+4. Auto-detect from credentials (`AWS_ACCESS_KEY_ID`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`, …)
 
 Also available: streaming API (`convert_stream`, `convert_stream_from_bytes`), sync wrapper (`convert_sync`), metadata inspection (`inspect`).
 
@@ -276,7 +286,7 @@ All options can be set via CLI flags, environment variables, or the builder API:
 
 | Flag | Env Variable | Default | Description |
 |------|-------------|---------|-------------|
-| `--model` | `EDGEQUAKE_MODEL` | gpt-4.1-nano | VLM model |
+| `--model` | `EDGEQUAKE_MODEL` | amazon.nova-lite-v1:0 | VLM model |
 | `--provider` | `EDGEQUAKE_PROVIDER` | auto-detect | LLM provider |
 | `--dpi` | `PDF2MD_DPI` | 150 | Rendering resolution (72–400) |
 | `--pages` | `PDF2MD_PAGES` | all | Page selection |
@@ -328,7 +338,7 @@ make inspect-all    # Inspect test PDFs
 | Crate | Purpose |
 |-------|---------|
 | [pdfium-render](https://crates.io/crates/pdfium-render) | PDF rasterisation via Google's pdfium C++ library |
-| [edgequake-llm](https://crates.io/crates/edgequake-llm) | Multi-provider LLM abstraction (OpenAI, Anthropic, Gemini, Azure, Ollama, etc.) — v0.2.7+ |
+| [edgequake-llm](https://crates.io/crates/edgequake-llm) | Multi-provider LLM abstraction (AWS Bedrock, OpenAI, Anthropic, Gemini, Azure, Ollama, etc.) — v0.3.0+ |
 | [tokio](https://crates.io/crates/tokio) | Async runtime |
 | [image](https://crates.io/crates/image) | Image encoding (PNG/JPEG) |
 | [clap](https://crates.io/crates/clap) | CLI argument parsing |
