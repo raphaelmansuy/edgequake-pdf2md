@@ -66,7 +66,7 @@
 //! A 50-page document costs roughly **$0.01** with `amazon.nova-lite-v1:0`.
 
 // ── Modules ──────────────────────────────────────────────────────────────
-
+pub mod checkpoint;
 pub mod config;
 pub mod convert;
 pub mod error;
@@ -78,6 +78,10 @@ pub mod stream;
 
 // ── Re-exports ───────────────────────────────────────────────────────────
 
+pub use checkpoint::{
+    compute_conversion_id, CheckpointStore, CheckpointedPage, FileCheckpointStore,
+    NoopCheckpointStore, PageStats,
+};
 pub use config::{
     ConversionConfig, ConversionConfigBuilder, FidelityTier, PageSelection, PageSeparator,
 };

@@ -8,6 +8,7 @@
 //! instead when you want pages progressively or need to limit peak memory
 //! use on documents with hundreds of pages.
 
+use crate::checkpoint::{compute_conversion_id, CheckpointMeta, PageStats};
 use crate::config::ConversionConfig;
 use crate::error::Pdf2MdError;
 use crate::output::{ConversionOutput, ConversionStats, DocumentMetadata, PageResult};
@@ -15,6 +16,7 @@ use crate::pipeline::render::EncodedPage;
 use crate::pipeline::{input, llm, postprocess, render};
 use edgequake_llm::{LLMProvider, ProviderFactory};
 use futures::StreamExt;
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -22,7 +24,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Convert a PDF file or URL to Markdown.
 ///
@@ -71,46 +73,153 @@ pub async fn convert(
     }
     debug!("Selected {} pages for conversion", page_indices.len());
 
+    // ── Step 4b: Checkpoint — compute conversion ID & load completed ─────
+    let conversion_id = if config.checkpoint_store.is_some() {
+        let provider_name = resolve_provider_name(config);
+        let model_name = resolve_model_name(config, &provider_name);
+        Some(compute_conversion_id(
+            &pdf_path,
+            &provider_name,
+            &model_name,
+            config.fidelity,
+            config.dpi,
+        )?)
+    } else {
+        None
+    };
+
+    // Determine which pages are already checkpointed (and thus can be skipped).
+    let mut resumed_results: Vec<PageResult> = Vec::new();
+    let mut pages_to_process: Vec<usize> = page_indices.clone();
+
+    if let (Some(ref store), Some(ref conv_id)) = (&config.checkpoint_store, &conversion_id) {
+        if config.no_resume {
+            // Force fresh: clear existing checkpoints
+            info!("--no-resume: clearing existing checkpoints for {}", conv_id);
+            store.clear_checkpoints(conv_id)?;
+        } else {
+            // Load completed pages from checkpoint store
+            let completed = store.list_completed_pages(conv_id)?;
+            if !completed.is_empty() {
+                let completed_set: HashSet<usize> = completed.iter().copied().collect();
+                info!(
+                    "Checkpoint: {} pages already completed for conversion {}",
+                    completed.len(),
+                    conv_id
+                );
+
+                // Load checkpointed results and separate pages to process
+                for &page_num_1based in &completed {
+                    // page_num_1based is 1-indexed, page_indices are 0-indexed
+                    let page_idx = page_num_1based.saturating_sub(1);
+                    if page_indices.contains(&page_idx) {
+                        if let Ok(Some(cp)) = store.load_page_checkpoint(conv_id, page_num_1based) {
+                            resumed_results.push(PageResult {
+                                page_num: cp.page_number,
+                                markdown: cp.markdown,
+                                input_tokens: cp.stats.input_tokens,
+                                output_tokens: cp.stats.output_tokens,
+                                duration_ms: cp.stats.duration_ms,
+                                retries: cp.stats.retries,
+                                error: None,
+                            });
+                        }
+                    }
+                }
+
+                // Filter out already-completed pages from the processing list
+                pages_to_process.retain(|idx| !completed_set.contains(&(idx + 1)));
+            }
+        }
+
+        // Save checkpoint metadata
+        let provider_name = resolve_provider_name(config);
+        let model_name = resolve_model_name(config, &provider_name);
+        let meta = CheckpointMeta {
+            conversion_id: conv_id.clone(),
+            pdf_path: pdf_path.display().to_string(),
+            provider_name,
+            model_name,
+            fidelity: format!("{:?}", config.fidelity),
+            dpi: config.dpi,
+            maintain_format: config.maintain_format,
+            created_at: chrono_now_iso(),
+        };
+        if let Err(e) = store.save_meta(conv_id, &meta) {
+            warn!("Failed to save checkpoint metadata: {}", e);
+        }
+    }
+
+    let resumed_count = resumed_results.len();
+
     // Fire on_conversion_start now that we know how many pages will actually
     // be converted (page_indices.len()), not the full document page count.
     if let Some(ref cb) = config.progress_callback {
         cb.on_conversion_start(page_indices.len());
     }
 
+    // Fire on_page_resumed for each checkpointed page
+    if let Some(ref cb) = config.progress_callback {
+        for pr in &resumed_results {
+            cb.on_page_resumed(pr.page_num, page_indices.len());
+        }
+    }
+
     // ── Step 5–7: Lazy render → encode → VLM pipeline ─────────────────
     //
-    // Instead of rendering ALL pages then encoding ALL base64 then calling
-    // the VLM, pages are now rendered, encoded, and dropped ONE AT A TIME
-    // through a bounded channel. Memory is bounded to at most `concurrency`
-    // pages instead of all pages. See issue #16.
+    // Only process pages that are NOT already checkpointed.
     let pipeline_start = Instant::now();
     let selected_count = page_indices.len();
-    let rx = render::spawn_lazy_render_encode(&pdf_path, config, &page_indices, config.concurrency)
+
+    let (fresh_results, cumulative_render_ms) = if pages_to_process.is_empty() {
+        info!(
+            "All {} pages loaded from checkpoint — no VLM calls needed",
+            resumed_count
+        );
+        (Vec::new(), 0u64)
+    } else {
+        info!(
+            "Processing {} fresh pages ({} resumed from checkpoint)",
+            pages_to_process.len(),
+            resumed_count
+        );
+
+        let rx = render::spawn_lazy_render_encode(
+            &pdf_path,
+            config,
+            &pages_to_process,
+            config.concurrency,
+        )
         .await?;
 
-    info!(
-        "Lazy pipeline started for {} pages (concurrency={})",
-        selected_count, config.concurrency
-    );
+        info!(
+            "Lazy pipeline started for {} pages (concurrency={})",
+            pages_to_process.len(),
+            config.concurrency
+        );
 
-    let (page_results, cumulative_render_ms) = if config.maintain_format {
-        process_sequential_lazy(rx, &provider, config, selected_count).await
-    } else {
-        process_concurrent_lazy(rx, &provider, config, selected_count).await
+        if config.maintain_format {
+            process_sequential_lazy(rx, &provider, config, selected_count, &conversion_id).await
+        } else {
+            process_concurrent_lazy(rx, &provider, config, selected_count, &conversion_id).await
+        }
     };
+
     let pipeline_duration_ms = pipeline_start.elapsed().as_millis() as u64;
     let render_duration_ms = cumulative_render_ms;
     let llm_duration_ms = pipeline_duration_ms;
 
     info!(
-        "Pipeline complete: {} results in {}ms (render={}ms)",
-        page_results.len(),
+        "Pipeline complete: {} fresh + {} resumed results in {}ms (render={}ms)",
+        fresh_results.len(),
+        resumed_count,
         pipeline_duration_ms,
         render_duration_ms
     );
 
     // ── Step 8: Post-process markdown ────────────────────────────────────
-    let mut pages: Vec<PageResult> = page_results
+    // Only post-process fresh results (checkpointed ones were already processed)
+    let fresh_results: Vec<PageResult> = fresh_results
         .into_iter()
         .map(|mut pr| {
             if pr.error.is_none() {
@@ -119,6 +228,10 @@ pub async fn convert(
             pr
         })
         .collect();
+
+    // Merge resumed + fresh results
+    let mut pages: Vec<PageResult> = resumed_results;
+    pages.extend(fresh_results);
 
     // Sort by page number for consistent output
     pages.sort_by_key(|p| p.page_num);
@@ -150,6 +263,7 @@ pub async fn convert(
         processed_pages: processed,
         failed_pages: failed,
         skipped_pages: skipped,
+        resumed_pages: resumed_count,
         total_input_tokens: pages.iter().map(|p| p.input_tokens as u64).sum(),
         total_output_tokens: pages.iter().map(|p| p.output_tokens as u64).sum(),
         total_duration_ms: total_start.elapsed().as_millis() as u64,
@@ -158,9 +272,24 @@ pub async fn convert(
     };
 
     info!(
-        "Conversion complete: {}/{} pages, {}ms total",
-        processed, total_pages, stats.total_duration_ms
+        "Conversion complete: {}/{} pages ({} resumed), {}ms total",
+        processed, total_pages, resumed_count, stats.total_duration_ms
     );
+
+    // ── Step 11: Clear checkpoints on success ────────────────────────────
+    if let (Some(ref store), Some(ref conv_id)) = (&config.checkpoint_store, &conversion_id) {
+        if failed == 0 {
+            info!("All pages succeeded — clearing checkpoints for {}", conv_id);
+            if let Err(e) = store.clear_checkpoints(conv_id) {
+                warn!("Failed to clear checkpoints: {}", e);
+            }
+        } else {
+            info!(
+                "{} pages failed — keeping checkpoints for resume ({})",
+                failed, conv_id
+            );
+        }
+    }
 
     // Fire on_conversion_complete with the count of selected pages, not the
     // full PDF page count, to match what on_conversion_start received.
@@ -467,19 +596,22 @@ async fn resolve_provider(config: &ConversionConfig) -> Result<Arc<dyn LLMProvid
 /// Process pages concurrently through the lazy pipeline (maintain_format = false).
 ///
 /// Receives encoded pages from the bounded channel and submits them to the VLM
-/// via `buffer_unordered(concurrency)`. Returns the page results and cumulative
+/// via `buffer_unordered(concurrency)`. Saves checkpoints after each page when
+/// a checkpoint store is configured. Returns the page results and cumulative
 /// render+encode time.
 async fn process_concurrent_lazy(
     rx: mpsc::Receiver<EncodedPage>,
     provider: &Arc<dyn LLMProvider>,
     config: &ConversionConfig,
     total_selected_pages: usize,
+    conversion_id: &Option<String>,
 ) -> (Vec<PageResult>, u64) {
     let render_ms = Arc::new(AtomicU64::new(0));
     let provider_ref = Arc::clone(provider);
     let cfg_ref = config.clone();
     let concurrency = config.concurrency;
     let render_ms_clone = Arc::clone(&render_ms);
+    let conv_id = conversion_id.clone();
 
     let results: Vec<PageResult> = ReceiverStream::new(rx)
         .map(move |page| {
@@ -487,6 +619,7 @@ async fn process_concurrent_lazy(
             let prov = Arc::clone(&provider_ref);
             let cfg = cfg_ref.clone();
             let total = total_selected_pages;
+            let cid = conv_id.clone();
             async move {
                 let page_num = page.page_index + 1;
                 if let Some(ref cb) = cfg.progress_callback {
@@ -499,6 +632,24 @@ async fn process_concurrent_lazy(
                         Some(e) => cb.on_page_error(page_num, total, e.to_string()),
                     }
                 }
+
+                // Save checkpoint for successful pages
+                if result.error.is_none() {
+                    if let (Some(ref store), Some(ref id)) = (&cfg.checkpoint_store, &cid) {
+                        let stats = PageStats {
+                            input_tokens: result.input_tokens,
+                            output_tokens: result.output_tokens,
+                            duration_ms: result.duration_ms,
+                            retries: result.retries,
+                        };
+                        if let Err(e) =
+                            store.save_page_checkpoint(id, page_num, &result.markdown, &stats)
+                        {
+                            warn!("Failed to save checkpoint for page {}: {}", page_num, e);
+                        }
+                    }
+                }
+
                 result
             }
         })
@@ -512,13 +663,15 @@ async fn process_concurrent_lazy(
 /// Process pages sequentially through the lazy pipeline (maintain_format = true).
 ///
 /// Receives encoded pages one at a time from the bounded channel, passing the
-/// previous page's markdown as context to each VLM call. Returns the page
+/// previous page's markdown as context to each VLM call. Saves checkpoints
+/// after each page when a checkpoint store is configured. Returns the page
 /// results and cumulative render+encode time.
 async fn process_sequential_lazy(
     rx: mpsc::Receiver<EncodedPage>,
     provider: &Arc<dyn LLMProvider>,
     config: &ConversionConfig,
     total_selected_pages: usize,
+    conversion_id: &Option<String>,
 ) -> (Vec<PageResult>, u64) {
     let mut results = Vec::new();
     let mut prior_markdown: Option<String> = None;
@@ -551,12 +704,90 @@ async fn process_sequential_lazy(
 
         if result.error.is_none() {
             prior_markdown = Some(result.markdown.clone());
+
+            // Save checkpoint for successful pages
+            if let (Some(ref store), Some(ref conv_id)) = (&config.checkpoint_store, conversion_id)
+            {
+                let stats = PageStats {
+                    input_tokens: result.input_tokens,
+                    output_tokens: result.output_tokens,
+                    duration_ms: result.duration_ms,
+                    retries: result.retries,
+                };
+                if let Err(e) =
+                    store.save_page_checkpoint(conv_id, page_num, &result.markdown, &stats)
+                {
+                    warn!("Failed to save checkpoint for page {}: {}", page_num, e);
+                }
+            }
         }
 
         results.push(result);
     }
 
     (results, total_render_ms)
+}
+
+/// Determine the effective provider name from the config/environment.
+///
+/// This mirrors the same lookup order as [`resolve_provider`] but returns
+/// only the name string (no provider instantiation). It is used to compute
+/// the deterministic `conversion_id` for checkpointing.
+fn resolve_provider_name(config: &ConversionConfig) -> String {
+    if config.provider.is_some() {
+        return "custom".to_string();
+    }
+    if let Some(ref name) = config.provider_name {
+        return name.clone();
+    }
+    if let (Ok(prov), Ok(model)) = (
+        std::env::var("EDGEQUAKE_LLM_PROVIDER"),
+        std::env::var("EDGEQUAKE_MODEL"),
+    ) {
+        if !prov.is_empty() && !model.is_empty() {
+            return prov;
+        }
+    }
+    if let Ok(key) = std::env::var("AWS_ACCESS_KEY_ID") {
+        if !key.is_empty() {
+            return "bedrock".to_string();
+        }
+    }
+    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+        if !key.is_empty() {
+            return "openai".to_string();
+        }
+    }
+    if let Ok(key) = std::env::var("MISTRAL_API_KEY") {
+        if !key.is_empty() {
+            return "mistral".to_string();
+        }
+    }
+    "auto".to_string()
+}
+
+/// Determine the effective model name from the config/environment.
+///
+/// Mirrors the model logic in [`resolve_provider`] so that the
+/// `conversion_id` stays consistent.
+fn resolve_model_name(config: &ConversionConfig, provider_name: &str) -> String {
+    if let Some(ref model) = config.model {
+        return model.clone();
+    }
+    default_vision_model_for_provider(provider_name).to_string()
+}
+
+/// Return a rough ISO-8601 timestamp using only `std` — avoids adding the
+/// `chrono` crate just for checkpoint metadata.
+fn chrono_now_iso() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // Convert epoch secs to a human-readable-ish string.
+    // We only need this for debugging, so precision isn't critical.
+    format!("epoch:{}", secs)
 }
 
 /// Assemble the final markdown document from page results.

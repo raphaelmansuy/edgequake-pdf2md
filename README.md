@@ -124,6 +124,15 @@ pdf2md --provider mistral --model pixtral-12b-2409 document.pdf
 
 # Use local Ollama
 pdf2md --provider ollama --model llava document.pdf
+
+# Resumable conversion with checkpoints (v0.7)
+pdf2md --checkpoint-dir ./checkpoints big-doc.pdf -o out.md
+
+# Resume after interruption (re-run the same command)
+pdf2md --checkpoint-dir ./checkpoints big-doc.pdf -o out.md
+
+# Force fresh conversion, clearing existing checkpoints
+pdf2md --checkpoint-dir ./checkpoints --no-resume big-doc.pdf -o out.md
 ```
 
 Run `pdf2md --help` for the full reference, including supported models and cost estimates.
@@ -156,7 +165,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-edgequake-pdf2md = "0.6"
+edgequake-pdf2md = "0.7"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -248,6 +257,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### Resumable conversions with checkpoints *(v0.7)*
+
+Enable page-level checkpointing for large documents (500–2000+ pages).
+If a conversion is interrupted, re-running with the same settings resumes
+from where it left off — already-completed pages are loaded instantly from
+the checkpoint store, skipping render + VLM calls entirely.
+
+```rust
+use edgequake_pdf2md::{convert, ConversionConfig, FileCheckpointStore};
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let store = Arc::new(FileCheckpointStore::new("./checkpoints"));
+
+    let config = ConversionConfig::builder()
+        .checkpoint_store(store)
+        .build()?;
+
+    let output = convert("big-document.pdf", &config).await?;
+    println!(
+        "Processed {} pages ({} resumed from checkpoint)",
+        output.stats.processed_pages,
+        output.stats.resumed_pages,
+    );
+    Ok(())
+}
+```
+
+Checkpoints are keyed by a deterministic conversion ID derived from the PDF
+content, provider, model, fidelity, and DPI. Changing any setting creates a
+separate checkpoint set. Checkpoints are automatically cleared when all pages
+succeed.
+
 ### Provider injection *(v0.2)*
 
 Pass a pre-built `Arc<dyn LLMProvider>` directly — useful for sharing providers
@@ -295,6 +338,8 @@ All options can be set via CLI flags, environment variables, or the builder API:
 | `--maintain-format` | `PDF2MD_MAINTAIN_FORMAT` | false | Sequential mode |
 | `--separator` | `PDF2MD_SEPARATOR` | none | Page separator |
 | `--temperature` | `PDF2MD_TEMPERATURE` | 0.1 | LLM temperature |
+| `--checkpoint-dir` | `PDF2MD_CHECKPOINT_DIR` | — | Checkpoint directory |
+| `--no-resume` | `PDF2MD_NO_RESUME` | false | Clear checkpoints, fresh run |
 
 See [docs/configuration.md](docs/configuration.md) for the complete reference.
 

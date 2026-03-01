@@ -149,6 +149,7 @@ jobs:
         run: echo "PDFIUM_BUNDLE_LIB=$PWD/pdfium-lib/lib/libpdfium.so" >> $GITHUB_ENV
 
       # Publish pdfium-auto first (dependency of edgequake-pdf2md); idempotent.
+      # continue-on-error: version may already be on crates.io.
       - name: Publish pdfium-auto
         continue-on-error: true
         run: cargo publish -p pdfium-auto --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -159,10 +160,33 @@ jobs:
       - name: Wait for crates.io index (45 s)
         run: sleep 45
 
+      # Publish edgequake-pdf2md; idempotent — if the version is already on
+      # crates.io (e.g. manual `cargo publish` before the tag push) the step
+      # succeeds so the GitHub Release is still created.
       - name: Publish edgequake-pdf2md
+        continue-on-error: true
         run: cargo publish -p edgequake-pdf2md --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      # Verify that the expected version is actually on crates.io.
+      # This catches real publish failures while tolerating "already published".
+      - name: Verify crate is on crates.io
+        run: |
+          VERSION="${{ needs.pre-publish-checks.outputs.version }}"
+          VERSION_NO_V="${VERSION#v}"
+          echo "Checking crates.io for edgequake-pdf2md ${VERSION_NO_V}..."
+          # Poll for up to 60 s (crates.io CDN can lag)
+          for i in $(seq 1 12); do
+            if cargo search edgequake-pdf2md --limit 1 | grep -q "${VERSION_NO_V}"; then
+              echo "✓ edgequake-pdf2md ${VERSION_NO_V} found on crates.io"
+              exit 0
+            fi
+            echo "  waiting… (attempt $i/12)"
+            sleep 5
+          done
+          echo "✗ edgequake-pdf2md ${VERSION_NO_V} NOT found on crates.io after 60 s"
+          exit 1
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

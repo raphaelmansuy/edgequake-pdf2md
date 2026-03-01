@@ -10,6 +10,7 @@
 //! The builder pattern lets callers set only what they care about and rely on
 //! well-documented defaults for the rest.
 
+use crate::checkpoint::CheckpointStore;
 use crate::error::Pdf2MdError;
 use crate::progress::ConversionProgressCallback;
 use edgequake_llm::LLMProvider;
@@ -166,6 +167,33 @@ pub struct ConversionConfig {
     /// ```
     /// This field is intentionally not serialisable; use the builder to set it at runtime.
     pub progress_callback: Option<Arc<dyn ConversionProgressCallback>>,
+
+    /// Optional checkpoint store for resumable conversions.
+    ///
+    /// When set, the library saves each page's result after VLM processing
+    /// and loads previously completed pages on resume. Use
+    /// [`crate::checkpoint::FileCheckpointStore`] for CLI usage or implement
+    /// [`CheckpointStore`] for custom storage backends.
+    ///
+    /// # Example
+    /// ```rust
+    /// use edgequake_pdf2md::{ConversionConfig, FileCheckpointStore};
+    /// use std::sync::Arc;
+    ///
+    /// let store = FileCheckpointStore::new("./checkpoints");
+    /// let config = ConversionConfig::builder()
+    ///     .checkpoint_store(Arc::new(store))
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub checkpoint_store: Option<Arc<dyn CheckpointStore>>,
+
+    /// Force fresh conversion, ignoring any existing checkpoints.
+    ///
+    /// When `true`, the library does not load checkpoints even if a
+    /// checkpoint store is configured. Existing checkpoints for the
+    /// conversion ID are cleared before processing begins.
+    pub no_resume: bool,
 }
 
 impl Default for ConversionConfig {
@@ -191,6 +219,8 @@ impl Default for ConversionConfig {
             download_timeout_secs: 120,
             api_timeout_secs: 60,
             progress_callback: None,
+            checkpoint_store: None,
+            no_resume: false,
         }
     }
 }
@@ -218,6 +248,11 @@ impl fmt::Debug for ConversionConfig {
                 "progress_callback",
                 &self.progress_callback.as_ref().map(|_| "<callback>"),
             )
+            .field(
+                "checkpoint_store",
+                &self.checkpoint_store.as_ref().map(|_| "<checkpoint_store>"),
+            )
+            .field("no_resume", &self.no_resume)
             .finish()
     }
 }
@@ -351,6 +386,26 @@ impl ConversionConfigBuilder {
 
     pub fn api_timeout_secs(mut self, secs: u64) -> Self {
         self.config.api_timeout_secs = secs;
+        self
+    }
+
+    /// Set a checkpoint store for resumable conversions.
+    ///
+    /// When set, each page's result is persisted after VLM processing.
+    /// On resume, completed pages are loaded from the store instead of
+    /// re-processed. Use [`crate::checkpoint::FileCheckpointStore`] for
+    /// file-based storage or implement [`CheckpointStore`] for custom backends.
+    pub fn checkpoint_store(mut self, store: Arc<dyn CheckpointStore>) -> Self {
+        self.config.checkpoint_store = Some(store);
+        self
+    }
+
+    /// Force a fresh conversion, ignoring any existing checkpoints.
+    ///
+    /// When `true`, checkpoints are cleared before processing and no
+    /// previously completed pages are loaded from the store.
+    pub fn no_resume(mut self, v: bool) -> Self {
+        self.config.no_resume = v;
         self
     }
 

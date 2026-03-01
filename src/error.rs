@@ -141,6 +141,11 @@ If the auto-download failed, you can:\n\
     )]
     PdfiumBindingFailed(String),
 
+    // ── Checkpoint errors ──────────────────────────────────────────────────
+    /// Checkpoint storage error (read, write, or validation failure).
+    #[error("Checkpoint error: {detail}")]
+    CheckpointError { detail: String },
+
     // ── Catch-all ─────────────────────────────────────────────────────────
     /// Unexpected internal error.
     #[error("Internal error: {0}")]

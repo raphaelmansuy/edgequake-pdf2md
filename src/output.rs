@@ -145,6 +145,13 @@ pub struct ConversionStats {
     /// page encoding failed before the LLM call was even attempted).
     pub skipped_pages: usize,
 
+    /// Pages loaded from checkpoint store instead of processed through VLM.
+    ///
+    /// Non-zero when checkpointing is enabled and a previous partial run
+    /// completed some pages. These pages were not re-rendered or re-processed;
+    /// their markdown was loaded directly from the checkpoint store.
+    pub resumed_pages: usize,
+
     /// Sum of all `PageResult::input_tokens` across processed pages.
     pub total_input_tokens: u64,
 
