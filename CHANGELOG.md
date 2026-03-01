@@ -11,6 +11,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.0] — 2026-03-01
+
+### Changed
+
+- **Lazy streaming render+encode pipeline (Issue #16).** Pages are now rendered,
+  encoded to base64, and dropped **one at a time** through a bounded
+  `tokio::sync::mpsc` channel instead of buffering all pages in memory at once.
+  - `DynamicImage` bitmaps are freed immediately after encoding, so peak memory
+    is bounded to `≈ concurrency × page_size` regardless of document size.
+  - `render::spawn_lazy_render_encode()` opens the PDF once in a
+    `spawn_blocking` task and streams `EncodedPage` items through a bounded
+    channel with back-pressure.
+  - `convert.rs` now uses `process_concurrent_lazy()` and
+    `process_sequential_lazy()` that consume from the lazy channel.
+  - `stream.rs` now uses the lazy pipeline for both concurrent and sequential
+    (maintain_format) streaming modes.
+  - `convert_stream_from_bytes()` keeps the tempfile alive for the full
+    lifetime of the lazy stream using `unfold`.
+  - The producer automatically stops when the receiver is dropped (cancellation
+    safe).
+
+### Added
+
+- `EncodedPage` struct — a rendered + base64-encoded page with timing metadata.
+- `spawn_lazy_render_encode()` — public async function returning an
+  `mpsc::Receiver<EncodedPage>` for lazy page production.
+- 8 new unit tests for the lazy pipeline (channel capacity, out-of-range
+  indices, receiver drop, bounded back-pressure, nonexistent file error).
+- 7 new e2e tests: `test_lazy_pipeline_single_page`,
+  `test_lazy_pipeline_concurrent_multi_page`,
+  `test_lazy_pipeline_sequential_maintain_format`, `test_lazy_stream_api`,
+  `test_lazy_pipeline_progress_callbacks`, `test_lazy_convert_from_bytes`,
+  `test_lazy_stream_from_bytes`.
+
+---
+
 ## [0.4.6] — 2026-02-22
 
 ### Changed

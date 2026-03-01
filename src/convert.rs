@@ -11,14 +11,18 @@
 use crate::config::ConversionConfig;
 use crate::error::Pdf2MdError;
 use crate::output::{ConversionOutput, ConversionStats, DocumentMetadata, PageResult};
-use crate::pipeline::{encode, input, llm, postprocess, render};
+use crate::pipeline::render::EncodedPage;
+use crate::pipeline::{input, llm, postprocess, render};
 use edgequake_llm::{LLMProvider, ProviderFactory};
-use futures::stream::{self, StreamExt};
+use futures::StreamExt;
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{debug, info, warn};
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
+use tracing::{debug, info};
 
 /// Convert a PDF file or URL to Markdown.
 ///
@@ -73,43 +77,37 @@ pub async fn convert(
         cb.on_conversion_start(page_indices.len());
     }
 
-    // ── Step 5: Rasterise pages ──────────────────────────────────────────
-    let render_start = Instant::now();
-    let rendered = render::render_pages(&pdf_path, config, &page_indices).await?;
-    let render_duration_ms = render_start.elapsed().as_millis() as u64;
+    // ── Step 5–7: Lazy render → encode → VLM pipeline ─────────────────
+    //
+    // Instead of rendering ALL pages then encoding ALL base64 then calling
+    // the VLM, pages are now rendered, encoded, and dropped ONE AT A TIME
+    // through a bounded channel. Memory is bounded to at most `concurrency`
+    // pages instead of all pages. See issue #16.
+    let pipeline_start = Instant::now();
+    let selected_count = page_indices.len();
+    let rx = render::spawn_lazy_render_encode(&pdf_path, config, &page_indices, config.concurrency)
+        .await?;
+
     info!(
-        "Rendered {} pages in {}ms",
-        rendered.len(),
-        render_duration_ms
+        "Lazy pipeline started for {} pages (concurrency={})",
+        selected_count, config.concurrency
     );
 
-    // ── Step 6: Encode images to base64 ──────────────────────────────────
-    let encoded: Vec<(usize, _)> = rendered
-        .iter()
-        .map(|(idx, img)| {
-            let data = encode::encode_page(img).map_err(|e| Pdf2MdError::RasterisationFailed {
-                page: idx + 1,
-                detail: format!("Image encoding failed: {}", e),
-            });
-            (*idx, data)
-        })
-        .filter_map(|(idx, result)| match result {
-            Ok(data) => Some((idx, data)),
-            Err(e) => {
-                warn!("Failed to encode page {}: {}", idx + 1, e);
-                None
-            }
-        })
-        .collect();
-
-    // ── Step 7: Process pages through VLM ────────────────────────────────
-    let llm_start = Instant::now();
-    let page_results = if config.maintain_format {
-        process_sequential(&provider, &encoded, config).await
+    let (page_results, cumulative_render_ms) = if config.maintain_format {
+        process_sequential_lazy(rx, &provider, config, selected_count).await
     } else {
-        process_concurrent(&provider, &encoded, config).await
+        process_concurrent_lazy(rx, &provider, config, selected_count).await
     };
-    let llm_duration_ms = llm_start.elapsed().as_millis() as u64;
+    let pipeline_duration_ms = pipeline_start.elapsed().as_millis() as u64;
+    let render_duration_ms = cumulative_render_ms;
+    let llm_duration_ms = pipeline_duration_ms;
+
+    info!(
+        "Pipeline complete: {} results in {}ms (render={}ms)",
+        page_results.len(),
+        pipeline_duration_ms,
+        render_duration_ms
+    );
 
     // ── Step 8: Post-process markdown ────────────────────────────────────
     let mut pages: Vec<PageResult> = page_results
@@ -402,57 +400,79 @@ async fn resolve_provider(config: &ConversionConfig) -> Result<Arc<dyn LLMProvid
     Ok(llm_provider)
 }
 
-/// Process pages concurrently (when maintain_format = false).
-async fn process_concurrent(
+/// Process pages concurrently through the lazy pipeline (maintain_format = false).
+///
+/// Receives encoded pages from the bounded channel and submits them to the VLM
+/// via `buffer_unordered(concurrency)`. Returns the page results and cumulative
+/// render+encode time.
+async fn process_concurrent_lazy(
+    rx: mpsc::Receiver<EncodedPage>,
     provider: &Arc<dyn LLMProvider>,
-    pages: &[(usize, edgequake_llm::ImageData)],
     config: &ConversionConfig,
-) -> Vec<PageResult> {
-    let total_pages = pages.len();
-    stream::iter(pages.iter().map(|(idx, img_data)| {
-        let provider = Arc::clone(provider);
-        let page_num = idx + 1;
-        let img = img_data.clone();
-        let config_clone = config.clone();
-        async move {
-            if let Some(ref cb) = config_clone.progress_callback {
-                cb.on_page_start(page_num, total_pages);
-            }
-            let result = llm::process_page(&provider, page_num, img, None, &config_clone).await;
-            if let Some(ref cb) = config_clone.progress_callback {
-                match &result.error {
-                    None => cb.on_page_complete(page_num, total_pages, result.markdown.len()),
-                    Some(e) => cb.on_page_error(page_num, total_pages, e.to_string()),
+    total_selected_pages: usize,
+) -> (Vec<PageResult>, u64) {
+    let render_ms = Arc::new(AtomicU64::new(0));
+    let provider_ref = Arc::clone(provider);
+    let cfg_ref = config.clone();
+    let concurrency = config.concurrency;
+    let render_ms_clone = Arc::clone(&render_ms);
+
+    let results: Vec<PageResult> = ReceiverStream::new(rx)
+        .map(move |page| {
+            render_ms_clone.fetch_add(page.render_encode_ms, Ordering::Relaxed);
+            let prov = Arc::clone(&provider_ref);
+            let cfg = cfg_ref.clone();
+            let total = total_selected_pages;
+            async move {
+                let page_num = page.page_index + 1;
+                if let Some(ref cb) = cfg.progress_callback {
+                    cb.on_page_start(page_num, total);
                 }
+                let result = llm::process_page(&prov, page_num, page.image_data, None, &cfg).await;
+                if let Some(ref cb) = cfg.progress_callback {
+                    match &result.error {
+                        None => cb.on_page_complete(page_num, total, result.markdown.len()),
+                        Some(e) => cb.on_page_error(page_num, total, e.to_string()),
+                    }
+                }
+                result
             }
-            result
-        }
-    }))
-    .buffer_unordered(config.concurrency)
-    .collect()
-    .await
+        })
+        .buffer_unordered(concurrency)
+        .collect()
+        .await;
+
+    (results, render_ms.load(Ordering::Relaxed))
 }
 
-/// Process pages sequentially, passing each page's markdown as context
-/// to the next (when maintain_format = true).
-async fn process_sequential(
+/// Process pages sequentially through the lazy pipeline (maintain_format = true).
+///
+/// Receives encoded pages one at a time from the bounded channel, passing the
+/// previous page's markdown as context to each VLM call. Returns the page
+/// results and cumulative render+encode time.
+async fn process_sequential_lazy(
+    rx: mpsc::Receiver<EncodedPage>,
     provider: &Arc<dyn LLMProvider>,
-    pages: &[(usize, edgequake_llm::ImageData)],
     config: &ConversionConfig,
-) -> Vec<PageResult> {
-    let mut results = Vec::with_capacity(pages.len());
+    total_selected_pages: usize,
+) -> (Vec<PageResult>, u64) {
+    let mut results = Vec::new();
     let mut prior_markdown: Option<String> = None;
-    let total_pages = pages.len();
+    let mut total_render_ms: u64 = 0;
+    let mut rx = rx;
 
-    for (idx, img_data) in pages {
-        let page_num = idx + 1;
+    while let Some(page) = rx.recv().await {
+        total_render_ms += page.render_encode_ms;
+        let page_num = page.page_index + 1;
+
         if let Some(ref cb) = config.progress_callback {
-            cb.on_page_start(page_num, total_pages);
+            cb.on_page_start(page_num, total_selected_pages);
         }
+
         let result = llm::process_page(
             provider,
             page_num,
-            img_data.clone(),
+            page.image_data,
             prior_markdown.as_deref(),
             config,
         )
@@ -460,8 +480,8 @@ async fn process_sequential(
 
         if let Some(ref cb) = config.progress_callback {
             match &result.error {
-                None => cb.on_page_complete(page_num, total_pages, result.markdown.len()),
-                Some(e) => cb.on_page_error(page_num, total_pages, e.to_string()),
+                None => cb.on_page_complete(page_num, total_selected_pages, result.markdown.len()),
+                Some(e) => cb.on_page_error(page_num, total_selected_pages, e.to_string()),
             }
         }
 
@@ -472,7 +492,7 @@ async fn process_sequential(
         results.push(result);
     }
 
-    results
+    (results, total_render_ms)
 }
 
 /// Assemble the final markdown document from page results.
