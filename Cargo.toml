@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name    = "edgequake-pdf2md"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2021"
 rust-version = "1.91"
 description  = "Convert PDF documents to Markdown using Vision Language Models — CLI and library"
@@ -72,6 +72,9 @@ thiserror      = "2"
 
 # Logging
 tracing        = "0.1"
+
+# Hashing (for checkpoint conversion IDs)
+sha2           = "0.10"
 
 # Regex (for post-processing)
 regex          = "1"

@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use edgequake_pdf2md::{
     convert, convert_to_file, inspect, ConversionConfig, ConversionProgressCallback, FidelityTier,
-    PageSelection, PageSeparator, ProgressCallback,
+    FileCheckpointStore, PageSelection, PageSeparator, ProgressCallback,
 };
 use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::HashMap;
@@ -160,6 +160,17 @@ impl ConversionProgressCallback for CliProgressCallback {
         self.bar.inc(1);
     }
 
+    fn on_page_resumed(&self, page_num: usize, total: usize) {
+        self.bar.println(format!(
+            "  {} Page {:>3}/{:<3}  {}",
+            cyan("↻"),
+            page_num,
+            total,
+            dim("resumed from checkpoint"),
+        ));
+        self.bar.inc(1);
+    }
+
     fn on_conversion_complete(&self, total_pages: usize, success_count: usize) {
         let failed = total_pages.saturating_sub(success_count);
         self.bar.finish_and_clear();
@@ -215,6 +226,15 @@ const AFTER_HELP: &str = r#"EXAMPLES:
   # Sequential mode for consistent formatting
   pdf2md --maintain-format --pages all book.pdf -o book.md
 
+  # Resumable conversion with checkpoints
+  pdf2md --checkpoint-dir ./checkpoints big-doc.pdf -o out.md
+
+  # Resume after interruption (same command, resumes automatically)
+  pdf2md --checkpoint-dir ./checkpoints big-doc.pdf -o out.md
+
+  # Force fresh conversion, clearing existing checkpoints
+  pdf2md --checkpoint-dir ./checkpoints --no-resume big-doc.pdf -o out.md
+
   # JSON output with metadata
   pdf2md --json --metadata document.pdf > output.json
 
@@ -256,6 +276,8 @@ ENVIRONMENT VARIABLES:
   EDGEQUAKE_MODEL         Override model ID
   PDFIUM_LIB_PATH         Path to an existing libpdfium — skips auto-download
   PDFIUM_AUTO_CACHE_DIR   Override the default pdfium cache directory
+  PDF2MD_CHECKPOINT_DIR   Directory for page-level checkpoints (resumable conversions)
+  PDF2MD_NO_RESUME        Force fresh conversion, clearing existing checkpoints
 
 SETUP:
   1. Set AWS credentials: export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
@@ -385,6 +407,27 @@ struct Cli {
     /// Per-page LLM call timeout in seconds.
     #[arg(long, env = "PDF2MD_API_TIMEOUT", default_value_t = 60)]
     api_timeout: u64,
+
+    /// Directory for page-level checkpoints (enables resumable conversions).
+    ///
+    /// When set, each successfully converted page is saved as a JSON checkpoint.
+    /// If the conversion is interrupted, re-running the same command resumes
+    /// from where it left off — already-completed pages are loaded from the
+    /// checkpoint store, skipping render + VLM calls entirely.
+    ///
+    /// Checkpoints are keyed by a deterministic conversion ID derived from the
+    /// PDF content, provider, model, fidelity tier, and DPI. Changing any of
+    /// these parameters creates a separate checkpoint set.
+    ///
+    /// Checkpoints are automatically cleared when all pages succeed.
+    #[arg(long, env = "PDF2MD_CHECKPOINT_DIR")]
+    checkpoint_dir: Option<PathBuf>,
+
+    /// Force a fresh conversion, clearing any existing checkpoints.
+    ///
+    /// Only meaningful together with --checkpoint-dir.
+    #[arg(long, env = "PDF2MD_NO_RESUME")]
+    no_resume: bool,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -642,6 +685,15 @@ async fn build_config(cli: &Cli, progress: Option<ProgressCallback>) -> Result<C
 
     if let Some(cb) = progress {
         builder = builder.progress_callback(cb);
+    }
+
+    // Checkpoint support
+    if let Some(ref dir) = cli.checkpoint_dir {
+        let store = FileCheckpointStore::new(dir);
+        builder = builder.checkpoint_store(Arc::new(store));
+    }
+    if cli.no_resume {
+        builder = builder.no_resume(true);
     }
 
     let mut config = builder.build().context("Invalid configuration")?;

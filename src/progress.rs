@@ -99,6 +99,18 @@ pub trait ConversionProgressCallback: Send + Sync {
         let _ = (page_num, total_pages, error);
     }
 
+    /// Called when a page is loaded from checkpoint instead of processed.
+    ///
+    /// This is called instead of `on_page_start` + `on_page_complete` for
+    /// pages that were previously checkpointed and are now being resumed.
+    ///
+    /// # Arguments
+    /// * `page_num`    — 1-indexed page number
+    /// * `total_pages` — total pages being processed
+    fn on_page_resumed(&self, page_num: usize, total_pages: usize) {
+        let _ = (page_num, total_pages);
+    }
+
     /// Called once after all pages have been attempted.
     ///
     /// # Arguments

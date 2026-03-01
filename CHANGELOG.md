@@ -11,6 +11,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.0] — 2026-06-10
+
+### Added
+
+- **Page-level checkpointing for resumable conversions** (Issue #20).
+  Large PDF conversions (500–2000+ pages) can now be interrupted and resumed
+  without re-processing already-completed pages.
+
+  - **`FileCheckpointStore`** — saves each page as a JSON file under a
+    configurable directory. Uses atomic writes (tmp + rename) for crash safety.
+  - **`NoopCheckpointStore`** — zero-overhead default (no checkpointing).
+  - **`CheckpointStore` trait** — synchronous, `Send + Sync`, extensible for
+    custom backends (database, S3, etc.).
+  - **Deterministic `conversion_id`** — SHA-256 of PDF content prefix (64 KB) +
+    file size + provider + model + fidelity tier + DPI. Changing any parameter
+    creates a new checkpoint set; same parameters always produce the same ID.
+  - **Automatic cleanup** — checkpoints are cleared when all pages succeed;
+    kept on partial failure for resume.
+  - **`on_page_resumed` progress callback** — fires for each page loaded from
+    checkpoint, enabling progress bars to count resumed pages.
+  - **`resumed_pages` stat** — new field in `ConversionStats` tracks how many
+    pages were loaded from checkpoints instead of via VLM.
+
+- **CLI flags**:
+  - `--checkpoint-dir <PATH>` — enable checkpointing with a specific directory.
+  - `--no-resume` — force fresh conversion, clearing existing checkpoints.
+  - Environment variables: `PDF2MD_CHECKPOINT_DIR`, `PDF2MD_NO_RESUME`.
+
+- **Library API**:
+  - `ConversionConfig::builder().checkpoint_store(store).no_resume(true)` —
+    configure checkpointing programmatically.
+  - `compute_conversion_id()` — compute the deterministic ID for a PDF +
+    settings combination.
+  - All checkpoint types re-exported from the crate root.
+
+- **25+ unit tests** in `src/checkpoint.rs` covering save/load, corruption,
+  isolation, unicode, large content, high page numbers, deterministic IDs, and
+  atomic writes.
+
+- **20+ integration tests** in `tests/e2e.rs` covering checkpoint round-trips,
+  conversion ID determinism (provider, model, fidelity, DPI, PDF content
+  changes), config builder integration, progress callbacks, and metadata
+  persistence.
+
+### Dependencies
+
+- Added `sha2 = "0.10"` for conversion ID computation.
+
+---
+
 ## [0.6.1] — 2026-03-01
 
 ### Fixed
