@@ -2,7 +2,7 @@
 name         = "pdfium-auto"
 version      = "0.3.0"
 edition      = "2021"
-rust-version = "1.88"
+rust-version = "1.91"
 description  = "Auto-download and cache PDFium binaries — zero-friction setup for pdfium-render"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/raphaelmansuy/edgequake-pdf2md"

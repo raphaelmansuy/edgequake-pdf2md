@@ -72,11 +72,11 @@ jobs:
       - run: cargo test --doc --no-default-features --features cli
 
   msrv:
-    name: MSRV Check (1.88)
+    name: MSRV Check (1.91)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.91
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --no-default-features --features cli
 
