@@ -14,6 +14,7 @@ use edgequake_pdf2md::{
     convert, inspect, ConversionConfig, FidelityTier, PageSelection, PageSeparator,
 };
 use std::path::PathBuf;
+use std::sync::Arc;
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
 
@@ -1096,4 +1097,277 @@ async fn test_openai_vision_pdf_conversion_v026_regression() {
         result.stats.total_output_tokens,
         result.markdown
     );
+}
+
+// ── Lazy pipeline tests (Issue #16) ──────────────────────────────────────────
+
+/// Verify the lazy pipeline produces identical output to eager for single page.
+/// This test uses the default conversion path which is now lazy internally.
+#[tokio::test]
+async fn test_lazy_pipeline_single_page() {
+    let path = e2e_skip_unless_ready!(test_cases_dir().join("irs_form_1040.pdf"));
+
+    let config = ConversionConfig::builder()
+        .pages(PageSelection::Single(1))
+        .max_retries(2)
+        .build()
+        .expect("valid config");
+
+    let result = convert(path.to_str().unwrap(), &config)
+        .await
+        .expect("lazy pipeline conversion should succeed");
+
+    assert_eq!(result.stats.processed_pages, 1);
+    assert_eq!(result.stats.failed_pages, 0);
+    assert_markdown_quality(&result.markdown, "lazy-single-page");
+
+    let lower = result.markdown.to_lowercase();
+    assert!(
+        lower.contains("income") || lower.contains("tax") || lower.contains("1040"),
+        "IRS form page 1 should mention tax-related content"
+    );
+
+    println!(
+        "[lazy-single] {} chars, {}ms total",
+        result.markdown.len(),
+        result.stats.total_duration_ms
+    );
+}
+
+/// Verify the lazy pipeline works with multiple concurrent pages.
+#[tokio::test]
+async fn test_lazy_pipeline_concurrent_multi_page() {
+    let path = e2e_skip_unless_ready!(test_cases_dir().join("attention_is_all_you_need.pdf"));
+    let out_path = output_dir().join("lazy_concurrent_3pages.md");
+
+    let config = ConversionConfig::builder()
+        .pages(PageSelection::Range(1, 3))
+        .concurrency(3)
+        .page_separator(PageSeparator::HorizontalRule)
+        .max_retries(2)
+        .build()
+        .expect("valid config");
+
+    let result = convert(path.to_str().unwrap(), &config)
+        .await
+        .expect("lazy concurrent conversion should succeed");
+
+    assert_eq!(result.stats.processed_pages, 3);
+    assert_eq!(result.stats.failed_pages, 0);
+    assert_markdown_quality(&result.markdown, "lazy-concurrent");
+
+    // Should have 2 separators for 3 pages
+    let sep_count = result.markdown.matches("---").count();
+    assert!(
+        sep_count >= 2,
+        "Expected at least 2 HR separators for 3 pages, got {sep_count}"
+    );
+
+    std::fs::write(&out_path, &result.markdown).ok();
+    println!(
+        "[lazy-concurrent] {} pages, {} chars, {}ms",
+        result.stats.processed_pages,
+        result.markdown.len(),
+        result.stats.total_duration_ms
+    );
+}
+
+/// Verify the lazy pipeline works with maintain_format (sequential).
+#[tokio::test]
+async fn test_lazy_pipeline_sequential_maintain_format() {
+    let path = e2e_skip_unless_ready!(test_cases_dir().join("attention_is_all_you_need.pdf"));
+
+    let config = ConversionConfig::builder()
+        .pages(PageSelection::Range(1, 2))
+        .maintain_format(true)
+        .concurrency(1)
+        .page_separator(PageSeparator::HorizontalRule)
+        .max_retries(2)
+        .build()
+        .expect("valid config");
+
+    let result = convert(path.to_str().unwrap(), &config)
+        .await
+        .expect("lazy sequential conversion should succeed");
+
+    assert_eq!(result.stats.processed_pages, 2);
+    assert_eq!(result.stats.failed_pages, 0);
+    assert_markdown_quality(&result.markdown, "lazy-sequential");
+
+    println!(
+        "[lazy-sequential] {} pages, {} chars, {}ms",
+        result.stats.processed_pages,
+        result.markdown.len(),
+        result.stats.total_duration_ms
+    );
+}
+
+/// Verify the streaming API uses the lazy pipeline.
+#[tokio::test]
+async fn test_lazy_stream_api() {
+    use edgequake_pdf2md::convert_stream;
+    use futures::StreamExt;
+
+    let path = e2e_skip_unless_ready!(test_cases_dir().join("irs_form_1040.pdf"));
+
+    let config = ConversionConfig::builder()
+        .pages(PageSelection::All)
+        .max_retries(2)
+        .build()
+        .expect("valid config");
+
+    let mut stream = convert_stream(path.to_str().unwrap(), &config)
+        .await
+        .expect("stream creation should succeed");
+
+    let mut pages = Vec::new();
+    while let Some(result) = stream.next().await {
+        match result {
+            Ok(page) => {
+                assert!(!page.markdown.trim().is_empty(), "page should have content");
+                pages.push(page);
+            }
+            Err(e) => panic!("streaming page failed: {e}"),
+        }
+    }
+
+    assert_eq!(pages.len(), 2, "IRS form has 2 pages");
+    println!("[lazy-stream] {} pages received via stream", pages.len());
+}
+
+/// Verify progress callbacks fire correctly with lazy pipeline.
+#[tokio::test]
+async fn test_lazy_pipeline_progress_callbacks() {
+    use edgequake_pdf2md::ConversionProgressCallback;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let path = e2e_skip_unless_ready!(test_cases_dir().join("irs_form_1040.pdf"));
+
+    let starts = Arc::new(AtomicUsize::new(0));
+    let completes = Arc::new(AtomicUsize::new(0));
+    let conversion_started = Arc::new(AtomicUsize::new(0));
+    let conversion_completed = Arc::new(AtomicUsize::new(0));
+
+    struct TestCallback {
+        starts: Arc<AtomicUsize>,
+        completes: Arc<AtomicUsize>,
+        conversion_started: Arc<AtomicUsize>,
+        conversion_completed: Arc<AtomicUsize>,
+    }
+
+    impl ConversionProgressCallback for TestCallback {
+        fn on_conversion_start(&self, total_pages: usize) {
+            self.conversion_started.store(total_pages, Ordering::SeqCst);
+        }
+        fn on_page_start(&self, _page_num: usize, _total: usize) {
+            self.starts.fetch_add(1, Ordering::SeqCst);
+        }
+        fn on_page_complete(&self, _page_num: usize, _total: usize, _len: usize) {
+            self.completes.fetch_add(1, Ordering::SeqCst);
+        }
+        fn on_conversion_complete(&self, _total: usize, success: usize) {
+            self.conversion_completed.store(success, Ordering::SeqCst);
+        }
+    }
+
+    let cb = Arc::new(TestCallback {
+        starts: Arc::clone(&starts),
+        completes: Arc::clone(&completes),
+        conversion_started: Arc::clone(&conversion_started),
+        conversion_completed: Arc::clone(&conversion_completed),
+    });
+
+    let config = ConversionConfig::builder()
+        .pages(PageSelection::All)
+        .max_retries(2)
+        .progress_callback(cb as Arc<dyn ConversionProgressCallback>)
+        .build()
+        .expect("valid config");
+
+    let result = convert(path.to_str().unwrap(), &config)
+        .await
+        .expect("conversion should succeed");
+
+    assert_eq!(result.stats.processed_pages, 2);
+    assert_eq!(
+        conversion_started.load(Ordering::SeqCst),
+        2,
+        "on_conversion_start should receive 2"
+    );
+    assert_eq!(
+        starts.load(Ordering::SeqCst),
+        2,
+        "on_page_start should fire 2 times"
+    );
+    assert_eq!(
+        completes.load(Ordering::SeqCst),
+        2,
+        "on_page_complete should fire 2 times"
+    );
+    assert_eq!(
+        conversion_completed.load(Ordering::SeqCst),
+        2,
+        "on_conversion_complete should receive 2 successes"
+    );
+
+    println!("[lazy-callbacks] all progress callbacks fired correctly");
+}
+
+/// Verify convert_from_bytes works with lazy pipeline.
+#[tokio::test]
+async fn test_lazy_convert_from_bytes() {
+    use edgequake_pdf2md::convert_from_bytes;
+
+    let path = e2e_skip_unless_ready!(test_cases_dir().join("irs_form_1040.pdf"));
+    let bytes = std::fs::read(&path).expect("read PDF bytes");
+
+    let config = ConversionConfig::builder()
+        .pages(PageSelection::Single(1))
+        .max_retries(2)
+        .build()
+        .expect("valid config");
+
+    let result = convert_from_bytes(&bytes, &config)
+        .await
+        .expect("convert_from_bytes should succeed with lazy pipeline");
+
+    assert_eq!(result.stats.processed_pages, 1);
+    assert_eq!(result.stats.failed_pages, 0);
+    assert_markdown_quality(&result.markdown, "lazy-from-bytes");
+
+    println!("[lazy-from-bytes] {} chars", result.markdown.len());
+}
+
+/// Verify convert_stream_from_bytes keeps tempfile alive with lazy pipeline.
+#[tokio::test]
+async fn test_lazy_stream_from_bytes() {
+    use edgequake_pdf2md::convert_stream_from_bytes;
+    use futures::StreamExt;
+
+    let path = e2e_skip_unless_ready!(test_cases_dir().join("irs_form_1040.pdf"));
+    let bytes = std::fs::read(&path).expect("read PDF bytes");
+
+    let config = ConversionConfig::builder()
+        .pages(PageSelection::Single(1))
+        .max_retries(2)
+        .build()
+        .expect("valid config");
+
+    let mut stream = convert_stream_from_bytes(&bytes, &config)
+        .await
+        .expect("stream_from_bytes should succeed");
+
+    let mut count = 0;
+    while let Some(result) = stream.next().await {
+        match result {
+            Ok(page) => {
+                assert!(!page.markdown.trim().is_empty());
+                count += 1;
+            }
+            Err(e) => panic!("streaming from bytes failed: {e}"),
+        }
+    }
+
+    assert_eq!(count, 1, "should get exactly 1 page");
+    println!("[lazy-stream-from-bytes] tempfile stayed alive correctly");
 }

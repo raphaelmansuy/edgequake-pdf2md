@@ -10,18 +10,26 @@
 //! all pages finish, [`convert_stream`] yields `PageResult` items via a
 //! `Stream` as each page completes. In concurrent mode pages may arrive out
 //! of order (sort by `page_num` if order matters).
+//!
+//! ## Lazy pipeline (v0.5.0)
+//!
+//! Pages are now rendered, encoded, and dropped **one at a time** through a
+//! bounded channel (`tokio::sync::mpsc`). The `DynamicImage` for each page is
+//! freed immediately after encoding, so memory is bounded to at most
+//! `concurrency` pages regardless of document size. See issue #16.
 
 use crate::config::ConversionConfig;
 use crate::error::{PageError, Pdf2MdError};
 use crate::output::PageResult;
-use crate::pipeline::{encode, input, llm, postprocess, render};
+use crate::pipeline::{input, llm, postprocess, render};
 use edgequake_llm::{LLMProvider, ProviderFactory};
-use futures::stream::{self, StreamExt};
+use futures::StreamExt;
 use std::io::Write;
 use std::pin::Pin;
 use std::sync::Arc;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::Stream;
-use tracing::{info, warn};
+use tracing::info;
 
 /// A boxed stream of page results.
 pub type PageStream = Pin<Box<dyn Stream<Item = Result<PageResult, PageError>> + Send>>;
@@ -61,62 +69,62 @@ pub async fn convert_stream(
         });
     }
 
-    // ── Render all pages ─────────────────────────────────────────────────
-    let rendered = render::render_pages(&pdf_path, config, &page_indices).await?;
-
-    // ── Encode images ────────────────────────────────────────────────────
-    let encoded: Vec<(usize, edgequake_llm::ImageData)> = rendered
-        .iter()
-        .filter_map(|(idx, img)| match encode::encode_page(img) {
-            Ok(data) => Some((*idx, data)),
-            Err(e) => {
-                warn!("Failed to encode page {}: {}", idx + 1, e);
-                None
-            }
-        })
-        .collect();
+    // ── Lazy render+encode pipeline ─────────────────────────────────────
+    let rx = render::spawn_lazy_render_encode(&pdf_path, config, &page_indices, config.concurrency)
+        .await?;
 
     // ── Build the stream ─────────────────────────────────────────────────
     let concurrency = config.concurrency;
     let config_clone = config.clone();
 
     if config.maintain_format {
-        // Sequential mode: must process in order
-        let s = stream::iter(encoded.into_iter()).then(move |(idx, img_data)| {
-            let provider = Arc::clone(&provider);
-            let cfg = config_clone.clone();
-            async move {
-                let page_num = idx + 1;
-                let mut result = llm::process_page(&provider, page_num, img_data, None, &cfg).await;
+        // Sequential mode: process in page order, passing prior markdown as
+        // context to each VLM call via `unfold`.
+        let s = futures::stream::unfold(
+            (rx, provider, config_clone, None::<String>),
+            |(mut rx, provider, cfg, prior_markdown)| async move {
+                let page = rx.recv().await?;
+                let page_num = page.page_index + 1;
+                let mut result = llm::process_page(
+                    &provider,
+                    page_num,
+                    page.image_data,
+                    prior_markdown.as_deref(),
+                    &cfg,
+                )
+                .await;
                 if result.error.is_none() {
                     result.markdown = postprocess::clean_markdown(&result.markdown);
-                    Ok(result)
+                    let new_prior = Some(result.markdown.clone());
+                    Some((Ok(result), (rx, provider, cfg, new_prior)))
                 } else {
                     let err = result.error.take().unwrap();
-                    Err(err)
+                    Some((Err(err), (rx, provider, cfg, prior_markdown)))
                 }
-            }
-        });
+            },
+        );
 
         Ok(Box::pin(s))
     } else {
         // Concurrent mode: process in parallel, emit as ready
-        let s = stream::iter(encoded.into_iter().map(move |(idx, img_data)| {
-            let provider = Arc::clone(&provider);
-            let cfg = config_clone.clone();
-            async move {
-                let page_num = idx + 1;
-                let mut result = llm::process_page(&provider, page_num, img_data, None, &cfg).await;
-                if result.error.is_none() {
-                    result.markdown = postprocess::clean_markdown(&result.markdown);
-                    Ok(result)
-                } else {
-                    let err = result.error.take().unwrap();
-                    Err(err)
+        let s = ReceiverStream::new(rx)
+            .map(move |page| {
+                let provider = Arc::clone(&provider);
+                let cfg = config_clone.clone();
+                async move {
+                    let page_num = page.page_index + 1;
+                    let mut result =
+                        llm::process_page(&provider, page_num, page.image_data, None, &cfg).await;
+                    if result.error.is_none() {
+                        result.markdown = postprocess::clean_markdown(&result.markdown);
+                        Ok(result)
+                    } else {
+                        let err = result.error.take().unwrap();
+                        Err(err)
+                    }
                 }
-            }
-        }))
-        .buffer_unordered(concurrency);
+            })
+            .buffer_unordered(concurrency);
 
         Ok(Box::pin(s))
     }
@@ -164,12 +172,17 @@ pub async fn convert_stream_from_bytes(
     tmp.write_all(bytes)
         .map_err(|e| Pdf2MdError::Internal(format!("tempfile write: {e}")))?;
     let path = tmp.path().to_string_lossy().to_string();
-    // Keep `tmp` alive for the duration of this call; the stream is fully
-    // materialised (pages rendered + encoded) before we return, so it is safe
-    // to drop the tempfile here.
-    let stream = convert_stream(&path, config).await?;
-    drop(tmp);
-    Ok(stream)
+    let inner = convert_stream(&path, config).await?;
+
+    // With lazy rendering, the producer's spawn_blocking task still accesses
+    // the tempfile as pages are rendered on-demand.  Keep `tmp` alive for the
+    // lifetime of the returned stream using `unfold` — it is dropped only
+    // when the stream is fully consumed or dropped by the caller.
+    let held = futures::stream::unfold((inner, tmp), |(mut stream, tmp)| async move {
+        let item = stream.next().await?;
+        Some((item, (stream, tmp)))
+    });
+    Ok(Box::pin(held))
 }
 
 /// Resolve LLM provider from config.

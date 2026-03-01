@@ -425,7 +425,7 @@ async fn main() -> Result<()> {
     // Subsequent startups skip this block entirely (instant path check only).
     #[cfg(feature = "bundled")]
     {
-        tokio::task::block_in_place(|| pdfium_auto::ensure_pdfium_bundled())
+        tokio::task::block_in_place(pdfium_auto::ensure_pdfium_bundled)
             .context("Failed to extract bundled PDFium engine")?;
     }
 
