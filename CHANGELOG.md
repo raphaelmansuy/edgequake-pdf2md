@@ -11,6 +11,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.0] — 2026-04-08
+
+### Changed
+
+- **Bump `edgequake-llm` dependency from `0.3.0` to `0.5.1`** — picks up all
+  provider additions and fixes released between the two versions:
+  - Azure OpenAI provider (`AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT`)
+  - Mistral AI provider (`MISTRAL_API_KEY`)
+  - Google Vertex AI as a distinct provider type (`GOOGLE_CLOUD_PROJECT`)
+  - xAI / Grok 4.20 improvements and timeout fixes
+  - Image generation API (`ImageGenProvider` trait, Gemini/VertexAI/FAL backends)
+  - Streaming usage propagation fixes (terminal chunk handling)
+  - Security dependency updates
+
+  All existing call sites (`ProviderFactory::create_llm_provider`,
+  `ProviderFactory::from_env`, `LLMProvider`, `ChatMessage`, `CompletionOptions`,
+  `ImageData`) are unchanged — this is a backward-compatible bump.
+
+---
+
 ## [0.7.0] — 2026-06-10
 
 ### Added
