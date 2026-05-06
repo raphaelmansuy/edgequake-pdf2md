@@ -527,7 +527,8 @@ mod tests {
     }
 
     /// Verify the lazy pipeline produces correct pages from a real PDF.
-    /// Skipped when pdfium is not available (e.g. CI without bundled feature).
+    /// Requires test_cases/irs_form_1040.pdf; run with `cargo test -- --ignored`.
+    #[ignore = "requires real PDF file and pdfium at runtime"]
     #[tokio::test]
     async fn spawn_lazy_produces_pages() {
         let pdf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -568,6 +569,7 @@ mod tests {
     }
 
     /// Verify out-of-range page indices are silently skipped.
+    #[ignore = "requires real PDF file and pdfium at runtime"]
     #[tokio::test]
     async fn spawn_lazy_skips_out_of_range() {
         let pdf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -602,6 +604,7 @@ mod tests {
     }
 
     /// Verify the producer stops when the receiver is dropped.
+    #[ignore = "requires real PDF file and pdfium at runtime"]
     #[tokio::test]
     async fn spawn_lazy_stops_on_receiver_drop() {
         let pdf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -635,6 +638,7 @@ mod tests {
 
     /// Verify bounded channel provides back-pressure (capacity=1 means
     /// at most 1 page buffered).
+    #[ignore = "requires real PDF file and pdfium at runtime"]
     #[tokio::test]
     async fn spawn_lazy_bounded_channel() {
         let pdf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
