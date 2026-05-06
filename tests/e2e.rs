@@ -858,6 +858,59 @@ async fn test_mistral_pdf_conversion() {
     );
 }
 
+/// Gated e2e: convert one PDF page using Anthropic Claude Sonnet 4.6.
+///
+/// Requirements:
+/// - `E2E_ENABLED=1`
+/// - Anthropic credentials set: `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`
+///
+/// Run:
+///   E2E_ENABLED=1 ANTHROPIC_API_KEY=... cargo test --test e2e test_anthropic_claude_sonnet -- --nocapture
+#[tokio::test]
+async fn test_anthropic_claude_sonnet() {
+    if std::env::var("E2E_ENABLED").is_err() {
+        println!("SKIP — set E2E_ENABLED=1 and Anthropic credentials to run");
+        return;
+    }
+    // Accept either ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN per env conventions
+    if std::env::var("ANTHROPIC_API_KEY").is_err() && std::env::var("ANTHROPIC_AUTH_TOKEN").is_err() {
+        println!("SKIP — Anthropic credentials not set (ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN)");
+        return;
+    }
+
+    let pdf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("test_cases")
+        .join("neuroscience_textbook.pdf");
+    if !pdf_path.exists() {
+        println!("SKIP — test_cases/neuroscience_textbook.pdf not found. Run: make download-test-pdfs");
+        return;
+    }
+
+    let config = ConversionConfig::builder()
+        .dpi(150)
+        .concurrency(1)
+        .pages(PageSelection::Single(1))
+        .fidelity(FidelityTier::Tier2)
+        .max_retries(2)
+        .max_tokens(4096)
+        .build()
+        .expect("config must build");
+
+    let mut cfg = config;
+    cfg.provider_name = Some("anthropic".to_string());
+    cfg.model = Some("claude-sonnet-4.6".to_string());
+
+    let result = convert(&pdf_path.to_string_lossy(), &cfg)
+        .await
+        .expect("Anthropic Claude Sonnet conversion must succeed");
+
+    assert!(!result.markdown.trim().is_empty(), "Anthropic conversion must produce non-empty Markdown");
+    assert_eq!(result.stats.processed_pages, 1);
+    assert_eq!(result.stats.failed_pages, 0);
+
+    println!("[anthropic] output ({} chars):\n{}", result.markdown.len(), result.markdown);
+}
+
 // ── Ollama provider e2e tests ─────────────────────────────────────────────────
 
 /// Helper: check if Ollama is reachable at the configured host.
