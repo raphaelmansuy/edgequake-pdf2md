@@ -138,6 +138,13 @@ fn render_pages_blocking(
     password: Option<&str>,
     page_indices: &[usize],
 ) -> Result<Vec<(usize, DynamicImage)>, Pdf2MdError> {
+    // Check file existence before binding pdfium: avoids loading the shared
+    // library (and triggering its atexit handlers) when the path is invalid.
+    if !pdf_path.exists() {
+        return Err(Pdf2MdError::FileNotFound {
+            path: pdf_path.to_path_buf(),
+        });
+    }
     let pdfium = get_pdfium()?;
 
     let document = pdfium
@@ -272,6 +279,14 @@ fn lazy_render_encode_blocking(
     tx: mpsc::Sender<EncodedPage>,
     ready_tx: oneshot::Sender<Result<(), Pdf2MdError>>,
 ) {
+    // Check file existence before binding pdfium: avoids loading the shared
+    // library (and triggering its atexit handlers) when the path is invalid.
+    if !pdf_path.exists() {
+        let _ = ready_tx.send(Err(Pdf2MdError::FileNotFound {
+            path: pdf_path.to_path_buf(),
+        }));
+        return;
+    }
     let pdfium = match get_pdfium() {
         Ok(p) => p,
         Err(e) => {
@@ -404,6 +419,12 @@ fn extract_metadata_blocking(
     pdf_path: &Path,
     password: Option<&str>,
 ) -> Result<DocumentMetadata, Pdf2MdError> {
+    // Check file existence before binding pdfium (same reason as in render_pages_blocking).
+    if !pdf_path.exists() {
+        return Err(Pdf2MdError::FileNotFound {
+            path: pdf_path.to_path_buf(),
+        });
+    }
     let pdfium = get_pdfium()?;
 
     let document =
