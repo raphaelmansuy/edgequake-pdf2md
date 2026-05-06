@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.0] — 2026-05-06
+
+### Changed
+
+- **Bump `edgequake-llm` dependency from `0.6.0` to `0.6.18`** — picks up all
+  provider additions and fixes released between the two versions:
+  - NVIDIA NIM provider (`NVIDIA_API_KEY`) — added in v0.6.14
+  - Mistral: `max_batch_size()` set to 512 preventing HTTP 400 code 3210 — v0.6.15
+  - `with_extra_headers()` builder on `OpenAICompatibleProvider` and `MistralProvider` — v0.6.16
+  - `with_extra_headers()` builder on `AnthropicProvider`, `GeminiProvider`, `NvidiaProvider` — v0.6.17
+  - Mistral embedding: defense-in-depth `embed_batch_http` guard — v0.6.18
+
+### Added (CLI)
+
+- **Short flag `-m` for `--model`** — `pdf2md -m gpt-4.1-nano` now works alongside the long form.
+- **Auto-detect provider from model slash-prefix** — if `--provider` is not given and
+  the model ID contains a `/`, the prefix is used as the provider name. E.g. `pdf2md -m anthropic/claude-sonnet-4-20250514` automatically selects the `anthropic` provider.
+- **Anthropic model shorthand mapping** — `claude-sonnet-4-6`, `claude-sonnet-4.6`, and
+  `claude-sonnet-latest` are transparently mapped to the canonical `claude-sonnet-4-20250514` model ID.
+
+---
+
 ## [0.8.0] — 2026-04-08
 
 ### Changed

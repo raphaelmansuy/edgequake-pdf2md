@@ -312,13 +312,14 @@ struct Cli {
     #[arg(short, long, env = "PDF2MD_OUTPUT")]
     output: Option<PathBuf>,
 
-    /// LLM model ID (e.g. amazon.nova-lite-v1:0, gpt-4.1-nano, claude-sonnet-4-20250514).
-    #[arg(
-        long,
-        env = "EDGEQUAKE_MODEL",
-        long_help = "Vision LLM model to use. Default: amazon.nova-lite-v1:0 ($0.06/$0.24 per 1M tokens).\n\
-          Popular choices: gpt-4.1-nano ($0.10/$0.40), gpt-4.1-mini ($0.40/$1.60), claude-sonnet-4-20250514 ($3/$15)."
-    )]
+        /// LLM model ID (e.g. amazon.nova-lite-v1:0, gpt-4.1-nano, claude-sonnet-4-20250514).
+        #[arg(
+                short = 'm',
+                long,
+                env = "EDGEQUAKE_MODEL",
+                long_help = "Vision LLM model to use. Default: amazon.nova-lite-v1:0 ($0.06/$0.24 per 1M tokens).\n\
+                    Popular choices: gpt-4.1-nano ($0.10/$0.40), gpt-4.1-mini ($0.40/$1.60), claude-sonnet-4-20250514 ($3/$15)."
+        )]
     model: Option<String>,
 
     /// LLM provider: bedrock, openai, anthropic, gemini, ollama, azure.
@@ -698,9 +699,42 @@ async fn build_config(cli: &Cli, progress: Option<ProgressCallback>) -> Result<C
 
     let mut config = builder.build().context("Invalid configuration")?;
 
+    // If the user passed a model like "anthropic/claude-sonnet-4-6" and did
+    // not explicitly set `--provider`, treat the prefix as the provider
+    // and the suffix as the model ID. This prevents accidental provider
+    // selection based on unrelated env vars (e.g. OPENAI_API_KEY present).
+    let mut model_val = cli.model.clone();
+    let mut provider_val = cli.provider.clone();
+    if provider_val.is_none() {
+        if let Some(ref m) = model_val {
+            if let Some((prov, mdl)) = m.split_once('/') {
+                provider_val = Some(prov.to_string());
+                model_val = Some(mdl.to_string());
+            }
+        }
+    }
+
     // Apply fields the builder doesn't have setters for (or that need special handling)
-    config.model = cli.model.clone();
-    config.provider_name = cli.provider.clone();
+    // Map a few common shorthand variants to the canonical Anthropic model IDs.
+    if let Some(ref prov) = provider_val {
+        if prov == "anthropic" {
+            if let Some(ref m) = model_val {
+                let canonical = match m.as_str() {
+                    "claude-sonnet-4-6" | "claude-sonnet-4.6" | "claude-sonnet-latest" => {
+                        Some("claude-sonnet-4-20250514".to_string())
+                    }
+                    // keep other values unchanged
+                    _ => None,
+                };
+                if let Some(c) = canonical {
+                    model_val = Some(c);
+                }
+            }
+        }
+    }
+
+    config.model = model_val;
+    config.provider_name = provider_val;
     config.password = cli.password.clone();
     config.system_prompt = system_prompt;
 
