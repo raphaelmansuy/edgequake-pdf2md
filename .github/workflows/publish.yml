@@ -45,6 +45,24 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # Pre-cache pdfium so unit tests don't download it at runtime.
+      - name: Cache pdfium library (Linux x64)
+        id: pdfium-cache
+        uses: actions/cache@v4
+        with:
+          path: pdfium-lib
+          key: pdfium-${{ env.PDFIUM_VERSION }}-x86_64-unknown-linux-gnu
+
+      - name: Download pdfium
+        if: steps.pdfium-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -L -f -o pdfium.tgz \
+            "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${{ env.PDFIUM_VERSION }}/pdfium-linux-x64.tgz"
+          mkdir -p pdfium-lib && tar xzf pdfium.tgz -C pdfium-lib && rm pdfium.tgz
+
+      - name: Set PDFIUM_LIB_PATH
+        run: echo "PDFIUM_LIB_PATH=$PWD/pdfium-lib/lib/libpdfium.so" >> $GITHUB_ENV
+
       # 1. Verify version matches Cargo.toml
       - name: Verify version in Cargo.toml
         run: |
