@@ -873,8 +873,11 @@ async fn test_anthropic_claude_sonnet() {
         return;
     }
     // Accept either ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN per env conventions
-    if std::env::var("ANTHROPIC_API_KEY").is_err() && std::env::var("ANTHROPIC_AUTH_TOKEN").is_err() {
-        println!("SKIP — Anthropic credentials not set (ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN)");
+    if std::env::var("ANTHROPIC_API_KEY").is_err() && std::env::var("ANTHROPIC_AUTH_TOKEN").is_err()
+    {
+        println!(
+            "SKIP — Anthropic credentials not set (ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN)"
+        );
         return;
     }
 
@@ -882,7 +885,9 @@ async fn test_anthropic_claude_sonnet() {
         .join("test_cases")
         .join("neuroscience_textbook.pdf");
     if !pdf_path.exists() {
-        println!("SKIP — test_cases/neuroscience_textbook.pdf not found. Run: make download-test-pdfs");
+        println!(
+            "SKIP — test_cases/neuroscience_textbook.pdf not found. Run: make download-test-pdfs"
+        );
         return;
     }
 
@@ -904,11 +909,18 @@ async fn test_anthropic_claude_sonnet() {
         .await
         .expect("Anthropic Claude Sonnet conversion must succeed");
 
-    assert!(!result.markdown.trim().is_empty(), "Anthropic conversion must produce non-empty Markdown");
+    assert!(
+        !result.markdown.trim().is_empty(),
+        "Anthropic conversion must produce non-empty Markdown"
+    );
     assert_eq!(result.stats.processed_pages, 1);
     assert_eq!(result.stats.failed_pages, 0);
 
-    println!("[anthropic] output ({} chars):\n{}", result.markdown.len(), result.markdown);
+    println!(
+        "[anthropic] output ({} chars):\n{}",
+        result.markdown.len(),
+        result.markdown
+    );
 }
 
 // ── Ollama provider e2e tests ─────────────────────────────────────────────────

@@ -312,14 +312,14 @@ struct Cli {
     #[arg(short, long, env = "PDF2MD_OUTPUT")]
     output: Option<PathBuf>,
 
-        /// LLM model ID (e.g. amazon.nova-lite-v1:0, gpt-4.1-nano, claude-sonnet-4-20250514).
-        #[arg(
-                short = 'm',
-                long,
-                env = "EDGEQUAKE_MODEL",
-                long_help = "Vision LLM model to use. Default: amazon.nova-lite-v1:0 ($0.06/$0.24 per 1M tokens).\n\
+    /// LLM model ID (e.g. amazon.nova-lite-v1:0, gpt-4.1-nano, claude-sonnet-4-20250514).
+    #[arg(
+        short = 'm',
+        long,
+        env = "EDGEQUAKE_MODEL",
+        long_help = "Vision LLM model to use. Default: amazon.nova-lite-v1:0 ($0.06/$0.24 per 1M tokens).\n\
                     Popular choices: gpt-4.1-nano ($0.10/$0.40), gpt-4.1-mini ($0.40/$1.60), claude-sonnet-4-20250514 ($3/$15)."
-        )]
+    )]
     model: Option<String>,
 
     /// LLM provider: bedrock, openai, anthropic, gemini, ollama, azure.
