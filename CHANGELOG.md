@@ -11,6 +11,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.2] — 2026-05-06
+
+### Fixed
+
+- **SIGBUS at process exit on Linux** — `Pdfium` instances created in
+  `spawn_blocking` contexts were dropped at task completion, triggering
+  `FPDF_DestroyLibrary` + `dlclose`.  On Linux, this unmaps the pdfium code
+  pages; any atexit/TLS destructor that later references a pdfium function
+  pointer causes SIGBUS.  Fixed by converting `get_pdfium()` from returning an
+  owned `Pdfium` value to returning a `&'static Pdfium` backed by a
+  `once_cell::sync::OnceCell` singleton.  `FPDF_InitLibrary` is now called
+  exactly once and `FPDF_DestroyLibrary` is never called during the process
+  lifetime, matching pdfium's documented usage contract.
+
+### Changed
+
+- **`pdfium-render` feature flag**: `thread_safe` → `sync`** — the `sync`
+  feature is a superset of `thread_safe` that additionally marks `Pdfium` as
+  `Send`, required for `OnceCell<Pdfium>` to be `Sync` (and thus usable as a
+  `static`).
+
+---
+
 ## [0.9.1] — 2026-05-06
 
 ### Changed

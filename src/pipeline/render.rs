@@ -21,41 +21,87 @@ use crate::error::Pdf2MdError;
 use crate::output::DocumentMetadata;
 use edgequake_llm::ImageData;
 use image::DynamicImage;
+use once_cell::sync::OnceCell;
 use pdfium_render::prelude::*;
 use std::path::Path;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
 
-/// Obtain a `Pdfium` instance via pdfium-auto.
+/// Process-wide pdfium singleton.
 ///
-/// When the `bundled` feature is active the pdfium shared library was embedded
-/// in the binary at compile time; it is extracted to the cache directory on
-/// first use and loaded from there (no network access required).
+/// Pdfium's `FPDF_InitLibrary`/`FPDF_DestroyLibrary` pair must be called at
+/// most once per process.  On Linux, if a `Pdfium` instance is dropped
+/// (triggering `FPDF_DestroyLibrary` + `dlclose`), the library code pages are
+/// unmapped; any later reference to pdfium function pointers — including those
+/// triggered by atexit/TLS destructors at process exit — causes SIGBUS.
 ///
-/// Without the `bundled` feature the library is downloaded on first use from
-/// <https://github.com/bblanchon/pdfium-binaries> and cached locally.
+/// Keeping one `Pdfium` alive for the entire process lifetime avoids this.
+static PDFIUM_SINGLETON: OnceCell<Pdfium> = OnceCell::new();
+/// If the first bind attempt failed, store the error message so subsequent
+/// callers get a consistent error without retrying the expensive dlopen path.
+static PDFIUM_BIND_ERROR: OnceCell<String> = OnceCell::new();
+
+/// Return a reference to the process-wide `Pdfium` instance.
+///
+/// The library is bound (and `FPDF_InitLibrary` is called) exactly once;
+/// subsequent calls return a reference to the same instance.  The instance
+/// is intentionally never dropped so that `FPDF_DestroyLibrary` is not called
+/// during the process lifetime, which would otherwise unmap the pdfium code
+/// pages and cause SIGBUS in cleanup handlers on Linux.
 ///
 /// # Errors
 /// Returns `Pdf2MdError::Internal` when the library cannot be loaded.  The
 /// error message includes a `PDFIUM_LIB_PATH` override hint.
-fn get_pdfium() -> Result<Pdfium, Pdf2MdError> {
-    #[cfg(feature = "bundled")]
-    {
-        pdfium_auto::bind_bundled().map_err(|e| {
-            Pdf2MdError::Internal(format!(
-                "PDFium library (bundled) unavailable: {e}\n\
-                 Hint: set PDFIUM_LIB_PATH=/path/to/libpdfium to use an existing copy."
-            ))
-        })
+fn get_pdfium() -> Result<&'static Pdfium, Pdf2MdError> {
+    // Fast path: already initialised or already known-failed.
+    if let Some(err) = PDFIUM_BIND_ERROR.get() {
+        return Err(make_bind_error(err));
+    }
+    if let Some(pdfium) = PDFIUM_SINGLETON.get() {
+        return Ok(pdfium);
     }
 
-    #[cfg(not(feature = "bundled"))]
-    pdfium_auto::bind_pdfium_silent().map_err(|e| {
-        Pdf2MdError::Internal(format!(
-            "PDFium library unavailable: {e}\n\
-             Hint: set PDFIUM_LIB_PATH=/path/to/libpdfium to use an existing copy."
-        ))
-    })
+    // Slow path: first call — bind the library.
+    let bind_result: Result<Pdfium, String> = {
+        #[cfg(feature = "bundled")]
+        {
+            pdfium_auto::bind_bundled().map_err(|e| {
+                format!(
+                    "PDFium library (bundled) unavailable: {e}\n\
+                     Hint: set PDFIUM_LIB_PATH=/path/to/libpdfium to use an existing copy."
+                )
+            })
+        }
+        #[cfg(not(feature = "bundled"))]
+        {
+            pdfium_auto::bind_pdfium_silent().map_err(|e| {
+                format!(
+                    "PDFium library unavailable: {e}\n\
+                     Hint: set PDFIUM_LIB_PATH=/path/to/libpdfium to use an existing copy."
+                )
+            })
+        }
+    };
+
+    match bind_result {
+        Ok(pdfium) => {
+            // `set` is a no-op if another thread raced us here; the winner's
+            // instance is returned either way.
+            let _ = PDFIUM_SINGLETON.set(pdfium);
+            Ok(PDFIUM_SINGLETON
+                .get()
+                .expect("just set above or already set"))
+        }
+        Err(msg) => {
+            let _ = PDFIUM_BIND_ERROR.set(msg.clone());
+            Err(make_bind_error(&msg))
+        }
+    }
+}
+
+#[inline]
+fn make_bind_error(msg: &str) -> Pdf2MdError {
+    Pdf2MdError::Internal(msg.to_owned())
 }
 
 /// Rasterise selected pages of a PDF into images.
