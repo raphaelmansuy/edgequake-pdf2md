@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name    = "edgequake-pdf2md"
-version = "0.9.1"
+version = "0.9.2"
 edition = "2021"
 rust-version = "1.91"
 description  = "Convert PDF documents to Markdown using Vision Language Models — CLI and library"
@@ -40,7 +40,7 @@ path = "src/lib.rs"
 
 [dependencies]
 # Core
-pdfium-render  = { version = "0.8", features = ["pdfium_latest", "image_latest", "thread_safe"] }
+pdfium-render  = { version = "0.8", features = ["pdfium_latest", "image_latest", "sync"] }
 # Auto-download pdfium: zero-friction setup for end-users
 pdfium-auto    = { path = "crates/pdfium-auto", version = "0.3" }
 # v0.3.0 adds AWS Bedrock provider (Converse API) with 12 model families,
