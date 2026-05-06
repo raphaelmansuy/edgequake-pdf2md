@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.1] — 2026-05-06
+
+### Changed
+
+- **Bump `edgequake-llm` from `0.6.18` → `0.6.20`** — critical embedding fix:
+  - v0.6.20: `MISTRAL_EMBED_MAX_BATCH_SIZE` corrected from 512 to **256** (true Mistral API hard limit). Sending >256 inputs per request triggered HTTP 400 code 3210 "Too many inputs in request", causing large-document ingestion failures permanently.
+  - v0.6.19: `ProviderFactory::create_llm_provider_with_headers()` — B2B header propagation for multi-tenant deployments.
+
+---
+
 ## [0.9.0] — 2026-05-06
 
 ### Changed
