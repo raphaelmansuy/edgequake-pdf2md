@@ -5,7 +5,7 @@
 //! - Captions **label** regions; they do not invent them.
 //! - Never return a near-full-page raster as a figure/table.
 //!
-//! Legacy [`PageRegion`] / [`extract_caption_regions_*`] remain for API stability.
+//! Legacy [`PageRegion`] / `extract_caption_regions_*` remain for API stability.
 
 use crate::error::Pdf2MdError;
 use crate::pipeline::visual::{
