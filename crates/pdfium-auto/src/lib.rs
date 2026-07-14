@@ -561,10 +561,7 @@ mod tests {
         let d = pdfium_cache_dir();
         // Always remove the override so parallel tests see a clean env.
         std::env::remove_var("PDFIUM_AUTO_CACHE_DIR");
-        assert!(
-            d.starts_with("/tmp/test_pdf2md_override"),
-            "left: {d:?}"
-        );
+        assert!(d.starts_with("/tmp/test_pdf2md_override"), "left: {d:?}");
         assert!(
             d.to_str().unwrap().contains(PDFIUM_VERSION),
             "expected PDFIUM_VERSION {PDFIUM_VERSION} in {d:?}"
