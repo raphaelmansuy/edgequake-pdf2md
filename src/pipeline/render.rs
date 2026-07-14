@@ -52,7 +52,7 @@ static PDFIUM_BIND_ERROR: OnceCell<String> = OnceCell::new();
 /// # Errors
 /// Returns `Pdf2MdError::Internal` when the library cannot be loaded.  The
 /// error message includes a `PDFIUM_LIB_PATH` override hint.
-fn get_pdfium() -> Result<&'static Pdfium, Pdf2MdError> {
+pub(crate) fn get_pdfium() -> Result<&'static Pdfium, Pdf2MdError> {
     // Fast path: already initialised or already known-failed.
     if let Some(err) = PDFIUM_BIND_ERROR.get() {
         return Err(make_bind_error(err));

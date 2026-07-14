@@ -17,6 +17,8 @@
 //!  │
 //!  ├─ 1. Input   resolve local file or download from URL
 //!  ├─ 2. Render  rasterise pages via pdfium (CPU-bound, spawn_blocking)
+//!  ├─ 2b. Extract embedded ImageXObjects (`extract_embedded_images`) for
+//!         figure-bounded VLM analyze (not full-page rasters)
 //!  ├─ 3. Encode  PNG → base64 ImageData
 //!  ├─ 4. VLM     concurrent calls to amazon.nova-lite / gpt-4.1-nano / claude / …
 //!  ├─ 5. Polish  10-rule post-processing (fences, tables, whitespace)
@@ -88,5 +90,19 @@ pub use config::{
 pub use convert::{convert, convert_from_bytes, convert_sync, convert_to_file, inspect};
 pub use error::{PageError, Pdf2MdError};
 pub use output::{ConversionOutput, ConversionStats, DocumentMetadata, PageResult};
+pub use pipeline::extract_images::{
+    extract_embedded_images, extract_embedded_images_from_bytes, extract_embedded_images_from_path,
+    EmbeddedImage,
+};
+pub use pipeline::extract_regions::{
+    extract_caption_regions, extract_caption_regions_from_bytes, extract_caption_regions_from_path,
+    PageRegion, RegionKind,
+};
+pub use pipeline::visual::{
+    extract_visual_regions, extract_visual_regions_from_bytes, extract_visual_regions_from_path,
+    iou, page_has_struct_tree, refine_proposals, PdfiumStructTreeProposer, RegionSource,
+    StructTreeProposer, UnavailableStructTreeProposer, VisualRegion, DEDUP_IOU, MAX_AREA_FRAC,
+    MIN_AREA_FRAC,
+};
 pub use progress::{ConversionProgressCallback, NoopProgressCallback, ProgressCallback};
 pub use stream::{convert_stream, convert_stream_from_bytes};

@@ -15,15 +15,20 @@
 //! 1. [`input`]  — canonicalise the user-supplied path or URL to a local file
 //! 2. [`render`] — rasterise selected pages; runs in `spawn_blocking` because
 //!    pdfium is not async-safe
-//! 3. [`encode`] — PNG-encode and base64-wrap each `DynamicImage` for the
+//! 3. [`extract_images`] / [`visual`] — figure-bounded ImageXObjects + SPEC-049
+//!    object-cluster Form/table regions (not full-page rasters)
+//! 4. [`encode`] — PNG-encode and base64-wrap each `DynamicImage` for the
 //!    multimodal API request body
-//! 4. [`llm`]    — drive the VLM call with retry/backoff; the only stage with
+//! 5. [`llm`]    — drive the VLM call with retry/backoff; the only stage with
 //!    network I/O
-//! 5. [`postprocess`] — deterministic text-cleanup rules to fix VLM quirks
+//! 6. [`postprocess`] — deterministic text-cleanup rules to fix VLM quirks
 //!    (markdown fences, hallucinated images, broken tables, etc.)
 
 pub mod encode;
+pub mod extract_images;
+pub mod extract_regions;
 pub mod input;
 pub mod llm;
 pub mod postprocess;
 pub mod render;
+pub mod visual;

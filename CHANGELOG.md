@@ -11,6 +11,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.7] — 2026-07-12
+
+### Added
+
+- **SPEC-049 P3 / L0 StructTree** — [`PdfiumStructTreeProposer`](crate::PdfiumStructTreeProposer)
+  walks page StructTree via public `get_handle_from_page` + `FPDF_StructTree_*`.
+  Figure/Table proposals require resolvable geometry (Layout `/BBox` and/or MCID →
+  page-object bounds). [`page_has_struct_tree`](crate::page_has_struct_tree) for
+  telemetry. Tagged fixture `test_cases/tagged_figure_sample.pdf` (E13).
+
+### Changed
+
+- Default visual extract uses `PdfiumStructTreeProposer` (L0 before L1).
+  Untagged corpora remain ObjectCluster-only. `UnavailableStructTreeProposer`
+  kept for L1-only tests.
+
+---
+
+## [0.9.5] — 2026-07-12
+
+### Added
+
+- **SPEC-049 visual cascade** — `pipeline::visual` object-cluster region extract
+  (L1 Form/Image/ruled-path overlap clustering) with caption **labeling** only.
+  Public API: [`extract_visual_regions`](crate::extract_visual_regions) /
+  `_from_bytes` / `_from_path`, [`VisualRegion`](crate::VisualRegion),
+  [`RegionSource`](crate::RegionSource), [`StructTreeProposer`](crate::StructTreeProposer)
+  (L0 stub until pdfium-render exposes page StructTree).
+- Area invariants exported: [`MIN_AREA_FRAC`](crate::MIN_AREA_FRAC) /
+  [`MAX_AREA_FRAC`](crate::MAX_AREA_FRAC) (0.02–0.55).
+
+### Changed
+
+- [`extract_caption_regions_*`](crate::extract_caption_regions) is now a DRY
+  facade over the visual cascade (no caption-string primary detection).
+
+---
+
+## [0.9.4] — 2026-07-12
+
+### Added
+
+- **`extract_caption_regions` / `_from_bytes` / `_from_path`** — caption-anchored
+  **Figure N** / **Table N** region crops via Pdfium (Form XObject + path + image
+  geometry). First principle: vector diagrams and ruled tables are not ImageXObjects;
+  never return a near-full-page raster as a figure/table (`MAX_AREA_FRAC = 0.55`).
+- Public types [`PageRegion`](crate::PageRegion), [`RegionKind`](crate::RegionKind).
+
+---
+
+## [0.9.3] — 2026-07-12
+
+### Added
+
+- **`extract_embedded_images` / `extract_embedded_images_from_bytes` /
+  `extract_embedded_images_from_path`** — decode PDF **ImageXObject** bitmaps
+  (with page index + PDF-space bbox) via the shared Pdfium singleton.
+  First principle: VLM figure/chart/illustration analysis must be bounded to
+  the embedded image object, not a full-page raster (`render_pages` remains
+  for page OCR / viewer context). Tiny images (&lt;24px edge) are skipped.
+- Public type [`EmbeddedImage`](crate::EmbeddedImage).
+
+---
+
 ## [0.9.2] — 2026-05-06
 
 ### Fixed

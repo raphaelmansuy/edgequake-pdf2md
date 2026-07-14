@@ -1,0 +1,50 @@
+%PDF-1.7
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R /MarkInfo << /Marked true >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 7 0 R >> >> /StructParents 0 >>
+endobj
+4 0 obj
+<< /Length 103 >>
+stream
+/Figure <</MCID 0>> BDC
+q 100 400 200 150 re 0 0 0 rg f Q
+EMC
+BT /F1 12 Tf 100 370 Td (Figure 1) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /StructTreeRoot /K [9 0 R] /ParentTree 8 0 R >>
+endobj
+6 0 obj
+<< /Type /StructElem /S /Figure /P 9 0 R /Pg 3 0 R /K 0 /Alt (Figure 1) /A << /O /Layout /BBox [100 400 300 550] >> >>
+endobj
+7 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+8 0 obj
+<< /Nums [0 [6 0 R]] >>
+endobj
+9 0 obj
+<< /Type /StructElem /S /Document /P 5 0 R /K [6 0 R] >>
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000009 00000 n 
+0000000109 00000 n 
+0000000166 00000 n 
+0000000309 00000 n 
+0000000462 00000 n 
+0000000534 00000 n 
+0000000668 00000 n 
+0000000738 00000 n 
+0000000777 00000 n 
+trailer<< /Size 10 /Root 1 0 R >>
+startxref
+849
+%%EOF
