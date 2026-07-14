@@ -416,6 +416,16 @@ fn resolve_or_download(
         );
     }
 
+    // Bail out early if the caller explicitly disabled network downloads.
+    // Useful in CI unit-test stages where pdfium is deliberately unavailable.
+    if std::env::var("PDFIUM_NO_AUTO_DOWNLOAD").is_ok() {
+        return Err(PdfiumAutoError::Download(
+            "auto-download disabled (PDFIUM_NO_AUTO_DOWNLOAD is set); \
+             set PDFIUM_LIB_PATH to point at an existing pdfium library"
+                .to_string(),
+        ));
+    }
+
     let info = detect_platform()?;
     let cache_dir = pdfium_cache_dir();
     let lib_path = cache_dir.join(info.lib_name);

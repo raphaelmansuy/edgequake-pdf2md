@@ -70,8 +70,12 @@ jobs:
       # 4. Unit tests — run BEFORE downloading pdfium so PDFIUM_LIB_PATH is not
       #    set; this prevents pdfium from being loaded by tests that would otherwise
       #    trigger the pdfium atexit crash on Linux when the process exits.
+      #    PDFIUM_NO_AUTO_DOWNLOAD prevents bind_pdfium_silent() from downloading
+      #    pdfium (~20 MB) when fixture-file tests call get_pdfium() without a path.
       - name: Run unit tests
         run: cargo test --lib --no-default-features --no-fail-fast
+        env:
+          PDFIUM_NO_AUTO_DOWNLOAD: "1"
 
       # 5. Documentation
       - name: Build documentation
