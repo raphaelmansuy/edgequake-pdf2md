@@ -540,20 +540,35 @@ mod tests {
 
     #[test]
     fn cache_dir_is_deterministic() {
+        // Guard against env pollution from a parallel test run.
+        std::env::remove_var("PDFIUM_AUTO_CACHE_DIR");
         let d1 = pdfium_cache_dir();
         let d2 = pdfium_cache_dir();
         assert_eq!(d1, d2);
-        assert!(d1.to_str().unwrap().contains("pdf2md"));
-        assert!(d1.to_str().unwrap().contains(PDFIUM_VERSION));
+        assert!(
+            d1.to_str().unwrap().contains("pdf2md"),
+            "expected 'pdf2md' in {d1:?}"
+        );
+        assert!(
+            d1.to_str().unwrap().contains(PDFIUM_VERSION),
+            "expected PDFIUM_VERSION {PDFIUM_VERSION} in {d1:?}"
+        );
     }
 
     #[test]
     fn cache_dir_override_via_env() {
         std::env::set_var("PDFIUM_AUTO_CACHE_DIR", "/tmp/test_pdf2md_override");
         let d = pdfium_cache_dir();
+        // Always remove the override so parallel tests see a clean env.
         std::env::remove_var("PDFIUM_AUTO_CACHE_DIR");
-        assert!(d.starts_with("/tmp/test_pdf2md_override"));
-        assert!(d.to_str().unwrap().contains(PDFIUM_VERSION));
+        assert!(
+            d.starts_with("/tmp/test_pdf2md_override"),
+            "left: {d:?}"
+        );
+        assert!(
+            d.to_str().unwrap().contains(PDFIUM_VERSION),
+            "expected PDFIUM_VERSION {PDFIUM_VERSION} in {d:?}"
+        );
     }
 
     #[test]
