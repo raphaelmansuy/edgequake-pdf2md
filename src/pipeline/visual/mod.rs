@@ -294,6 +294,7 @@ mod tests {
         );
     }
 
+    #[ignore = "calls get_pdfium() unconditionally; pdfium atexit handler crashes on Linux CI exit"]
     #[test]
     fn e11_empty_bytes_errors_or_empty() {
         let err = extract_visual_regions_from_bytes(b"not-a-pdf", None);
