@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.8] — 2026-07-24
+
+### Changed
+
+- Bump `edgequake-llm` from `0.6.20` to **`0.10.2`** (OTEL 0.32 stack; clears
+  transitive `opentelemetry_sdk@0.27` Dependabot residual).
+- Raise MSRV from 1.91 to **1.95** (required by `edgequake-llm` 0.10.x).
+
+---
+
 ## [0.9.7] — 2026-07-12
 
 ### Added

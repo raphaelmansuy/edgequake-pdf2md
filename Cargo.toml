@@ -4,9 +4,9 @@ resolver = "2"
 
 [package]
 name    = "edgequake-pdf2md"
-version = "0.9.7"
+version = "0.9.8"
 edition = "2021"
-rust-version = "1.91"
+rust-version = "1.95"
 description  = "Convert PDF documents to Markdown using Vision Language Models — CLI and library"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/raphaelmansuy/edgequake-pdf2md"
@@ -48,7 +48,8 @@ pdfium-auto    = { path = "crates/pdfium-auto", version = "0.3" }
 #         auto-resolution, and fixes reasoning model false positives for
 #         Qwen3-VL / Qwen3-VL-Embedding (Issue #19).
 #         Default model changed to amazon.nova-lite-v1:0.
-edgequake-llm  = { version = "0.6.20", features = ["bedrock"] }
+# ≥0.10.2: OTEL 0.32 stack (clears transitive opentelemetry_sdk 0.27 via llm 0.6.x).
+edgequake-llm  = { version = "0.10.2", features = ["bedrock"] }
 tokio          = { version = "1", features = ["full"] }
 futures        = "0.3"
 tokio-stream   = "0.1"
