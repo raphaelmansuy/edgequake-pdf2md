@@ -672,6 +672,9 @@ mod tests {
     }
 
     /// SPEC-095 / R-17: concurrent first-bind must not hang (get_or_try_init).
+    /// Requires `bundled` (or a real `PDFIUM_LIB_PATH`); CI unit jobs set
+    /// `PDFIUM_NO_AUTO_DOWNLOAD` without bundled and must skip this.
+    #[cfg(feature = "bundled")]
     #[test]
     fn get_pdfium_serializes_first_bind() {
         let handles: Vec<_> = (0..8)

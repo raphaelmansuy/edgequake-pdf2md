@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.10] — 2026-07-31
+
+### Fixed
+
+- Gate `get_pdfium_serializes_first_bind` behind `bundled` so CI unit jobs with
+  `PDFIUM_NO_AUTO_DOWNLOAD` (no library) do not fail publish pre-checks.
+
+---
+
 ## [0.9.9] — 2026-07-31
 
 ### Fixed
