@@ -49,11 +49,13 @@ static PDFIUM_BIND_ERROR: OnceCell<String> = OnceCell::new();
 /// during the process lifetime, which would otherwise unmap the pdfium code
 /// pages and cause SIGBUS in cleanup handlers on Linux.
 ///
+/// Concurrent first callers serialize via [`OnceCell::get_or_try_init`]
+/// (SPEC-091 R-17 / SPEC-095) so only one `Pdfium::new` runs.
+///
 /// # Errors
 /// Returns `Pdf2MdError::Internal` when the library cannot be loaded.  The
 /// error message includes a `PDFIUM_LIB_PATH` override hint.
 pub(crate) fn get_pdfium() -> Result<&'static Pdfium, Pdf2MdError> {
-    // Fast path: already initialised or already known-failed.
     if let Some(err) = PDFIUM_BIND_ERROR.get() {
         return Err(make_bind_error(err));
     }
@@ -61,8 +63,7 @@ pub(crate) fn get_pdfium() -> Result<&'static Pdfium, Pdf2MdError> {
         return Ok(pdfium);
     }
 
-    // Slow path: first call — bind the library.
-    let bind_result: Result<Pdfium, String> = {
+    match PDFIUM_SINGLETON.get_or_try_init(|| {
         #[cfg(feature = "bundled")]
         {
             pdfium_auto::bind_bundled().map_err(|e| {
@@ -81,22 +82,20 @@ pub(crate) fn get_pdfium() -> Result<&'static Pdfium, Pdf2MdError> {
                 )
             })
         }
-    };
-
-    match bind_result {
-        Ok(pdfium) => {
-            // `set` is a no-op if another thread raced us here; the winner's
-            // instance is returned either way.
-            let _ = PDFIUM_SINGLETON.set(pdfium);
-            Ok(PDFIUM_SINGLETON
-                .get()
-                .expect("just set above or already set"))
-        }
+    }) {
+        Ok(pdfium) => Ok(pdfium),
         Err(msg) => {
             let _ = PDFIUM_BIND_ERROR.set(msg.clone());
             Err(make_bind_error(&msg))
         }
     }
+}
+
+/// Prime the process-wide PDFium singleton (extract + bind).
+///
+/// Call once at process startup before concurrent PDF work (SPEC-095).
+pub fn prime_pdfium() -> Result<(), Pdf2MdError> {
+    get_pdfium().map(|_| ())
 }
 
 #[inline]
@@ -670,5 +669,21 @@ mod tests {
         assert!(p2.is_some());
         let p3 = rx.recv().await;
         assert!(p3.is_none(), "channel should be closed after 2 pages");
+    }
+
+    /// SPEC-095 / R-17: concurrent first-bind must not hang (get_or_try_init).
+    #[test]
+    fn get_pdfium_serializes_first_bind() {
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    prime_pdfium().expect("concurrent prime_pdfium");
+                    get_pdfium().expect("concurrent get_pdfium");
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
     }
 }

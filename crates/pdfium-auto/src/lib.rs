@@ -9,82 +9,26 @@
 //! On first call to [`bind_pdfium`] or [`ensure_pdfium_library`]:
 //!
 //! 1. Checks `~/.cache/pdf2md/pdfium-{VERSION}/` for the platform library.
-//! 2. If absent, downloads the correct `.tgz` from
+//! 2. If absent or truncated, downloads the correct `.tgz` from
 //!    [bblanchon/pdfium-binaries](https://github.com/bblanchon/pdfium-binaries).
-//! 3. Extracts `lib/libpdfium.dylib` (or `.so` / `.dll`) to the cache dir.
+//! 3. Extracts via atomic temp-file + `rename`, guarded by an advisory lock.
 //! 4. Calls [`Pdfium::bind_to_library`] to load the real library.
 //!
-//! Subsequent calls skip the network entirely — the library is already cached.
+//! ## SPEC-095 — cache poison fix
 //!
-//! ## `bundled` feature — compile-time embedding
-//!
-//! For use-cases that require a fully self-contained binary (e.g., CI/CD
-//! distribution), the optional `bundled` feature embeds the pdfium shared
-//! library directly into the compiled executable.
-//!
-//! **Build steps:**
-//!
-//! ```sh
-//! # 1. Download and extract the platform archive (example: macOS arm64).
-//! curl -L https://github.com/bblanchon/pdfium-binaries/releases/download/ \
-//!      chromium%2F7690/pdfium-mac-arm64.tgz | tar xz
-//!
-//! # 2. Build with the bundled feature, pointing PDFIUM_BUNDLE_LIB at the lib.
-//! PDFIUM_BUNDLE_LIB=./lib/libpdfium.dylib \
-//!   cargo build --release --features pdfium-auto/bundled
-//! ```
-//!
-//! At runtime, the embedded bytes are extracted to the cache directory on
-//! first use ([`ensure_pdfium_bundled`] / [`bind_bundled`]).  The resulting
-//! binary ships without any external dependency on libpdfium or network access.
-//!
-//! **Trade-offs:**
-//!
-//! | | Runtime-download (`bind_pdfium`) | Compile-time-bundled (`bind_bundled`) |
-//! |--|--|--|
-//! | Binary size | ~5 MB | ~35 MB (+30 MB) |
-//! | First run | Downloads pdfium (~20 s) | Instant (already embedded) |
-//! | Net access required at runtime | Once (first run) | Never |
-//! | Net access required at compile time | No | No |
-//! | Cross-platform binary | N/A (same arch) | Same constraints |
-//!
-//! ## Usage
-//!
-//! ```rust,no_run
-//! use pdfium_auto::{bind_pdfium_silent, bind_pdfium_from_path, ensure_pdfium_library};
-//!
-//! // Option A: convenient one-shot bind (silent, no progress)
-//! let pdfium = bind_pdfium_silent().expect("PDFium unavailable");
-//!
-//! // Option B: download with progress, then bind
-//! let path = ensure_pdfium_library(Some(&|downloaded, total| {
-//!     if let Some(t) = total {
-//!         eprint!("\rDownloading PDFium: {}/{} bytes", downloaded, t);
-//!     }
-//! })).expect("download failed");
-//! let pdfium = bind_pdfium_from_path(&path).expect("bind failed");
-//! ```
-//!
-//! ## Platform support
-//!
-//! | OS      | Arch    | Library               |
-//! |---------|---------|-----------------------|
-//! | macOS   | arm64   | `libpdfium.dylib`     |
-//! | macOS   | x86_64  | `libpdfium.dylib`     |
-//! | Linux   | x86_64  | `libpdfium.so`        |
-//! | Linux   | aarch64 | `libpdfium.so`        |
-//! | Windows | x86_64  | `pdfium.dll`          |
-//! | Windows | aarch64 | `pdfium.dll`          |
-//! | Windows | x86     | `pdfium.dll`          |
+//! Extraction never writes directly to the final path. A short / corrupt file
+//! fails the size integrity check and is re-extracted. Concurrent callers
+//! serialize on an advisory lock file.
 //!
 //! ## Environment variable overrides
 //!
-//! - `PDFIUM_LIB_PATH` — path to an existing pdfium library; skips download.
-//! - `PDFIUM_AUTO_CACHE_DIR` — override the default cache directory.
+//! - `PDFIUM_LIB_PATH` — path to an existing pdfium library; skips extract/download.
+//! - `PDFIUM_AUTO_CACHE_DIR` — override the base cache directory.
 //! - `PDFIUM_BUNDLE_LIB` — (compile time) path to the dylib to embed when
 //!   the `bundled` feature is active.
 
-use std::io::Read;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -93,13 +37,18 @@ use thiserror::Error;
 
 // ── Public constants ─────────────────────────────────────────────────────────
 
-/// The pdfium-binaries release tag used for downloads.
+/// The pdfium-binaries release tag used for downloads and cache paths.
 ///
-/// Maps to [`bblanchon/pdfium-binaries chromium/7690`](https://github.com/bblanchon/pdfium-binaries/releases/tag/chromium%2F7690).
-pub const PDFIUM_VERSION: &str = "7690";
+/// Latest stable as of 2026-07-20: [`bblanchon/pdfium-binaries chromium/7961`]
+/// (PDFium 152.0.7961.0).
+pub const PDFIUM_VERSION: &str = "7961";
 
 /// GitHub release base URL.
 const BASE_URL: &str = "https://github.com/bblanchon/pdfium-binaries/releases/download";
+
+/// Minimum plausible shared-library size (guards against truncated poison files
+/// when exact expected length is unknown — download mode).
+const MIN_LIB_BYTES: u64 = 100_000;
 
 // ── Error type ───────────────────────────────────────────────────────────────
 
@@ -121,6 +70,10 @@ pub enum PdfiumAutoError {
     /// gzip/tar extraction failed.
     #[error("Archive extraction failed: {0}")]
     Extract(String),
+
+    /// Advisory lock acquisition failed.
+    #[error("Cache lock error: {0}")]
+    Lock(String),
 
     /// `libloading` / `pdfium-render` could not load the library.
     #[error("Failed to bind PDFium from '{path}': {reason}")]
@@ -211,6 +164,110 @@ pub fn pdfium_cache_dir() -> PathBuf {
 
 static RESOLVED_PATH: OnceLock<PathBuf> = OnceLock::new();
 
+// ── Integrity + atomic publish (SPEC-095) ────────────────────────────────────
+
+/// Returns true when `path` exists and has exact `expected_len` bytes.
+#[cfg(feature = "bundled")]
+fn cache_file_valid_exact(path: &Path, expected_len: u64) -> bool {
+    std::fs::metadata(path)
+        .map(|m| m.len() == expected_len)
+        .unwrap_or(false)
+}
+
+/// Returns true when `path` exists and is at least `MIN_LIB_BYTES` (download mode).
+fn cache_file_valid_min(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|m| m.len() >= MIN_LIB_BYTES)
+        .unwrap_or(false)
+}
+
+fn lib_path_override() -> Option<PathBuf> {
+    let env_path = std::env::var_os("PDFIUM_LIB_PATH")?;
+    let p = PathBuf::from(env_path);
+    match std::fs::metadata(&p) {
+        Ok(m) if m.len() > 0 => Some(p),
+        _ => None,
+    }
+}
+
+/// Acquire an exclusive advisory lock for extraction into `cache_dir`.
+fn acquire_extract_lock(cache_dir: &Path) -> Result<File, PdfiumAutoError> {
+    std::fs::create_dir_all(cache_dir).map_err(PdfiumAutoError::CacheDir)?;
+    let lock_path = cache_dir.join("pdfium.extract.lock");
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(PdfiumAutoError::CacheDir)?;
+    file.lock()
+        .map_err(|e| PdfiumAutoError::Lock(format!("{}: {e}", lock_path.display())))?;
+    Ok(file)
+}
+
+/// Write `bytes` to a unique temp file under the same directory as `dest`,
+/// fsync, then atomically `rename` onto `dest`.
+fn atomic_publish_bytes(dest: &Path, bytes: &[u8]) -> Result<(), PdfiumAutoError> {
+    let parent = dest.parent().ok_or_else(|| {
+        PdfiumAutoError::Extract(format!("destination has no parent: {}", dest.display()))
+    })?;
+    std::fs::create_dir_all(parent).map_err(PdfiumAutoError::CacheDir)?;
+
+    // Unique temp names: pid + monotonic seq (nanos alone can collide under load).
+    static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = parent.join(format!(
+        "{}.tmp.{}.{}",
+        dest.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("libpdfium"),
+        std::process::id(),
+        seq
+    ));
+
+    {
+        let mut f = File::create(&tmp)
+            .map_err(|e| PdfiumAutoError::Extract(format!("create temp {}: {e}", tmp.display())))?;
+        f.write_all(bytes)
+            .map_err(|e| PdfiumAutoError::Extract(format!("write temp {}: {e}", tmp.display())))?;
+        f.sync_all()
+            .map_err(|e| PdfiumAutoError::Extract(format!("fsync temp {}: {e}", tmp.display())))?;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&tmp)
+            .map_err(PdfiumAutoError::CacheDir)?
+            .permissions();
+        perms.set_mode(perms.mode() | 0o755);
+        std::fs::set_permissions(&tmp, perms).map_err(PdfiumAutoError::CacheDir)?;
+    }
+
+    // Windows rename fails if dest exists; Unix replaces atomically.
+    #[cfg(windows)]
+    {
+        let _ = std::fs::remove_file(dest);
+    }
+
+    std::fs::rename(&tmp, dest).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        PdfiumAutoError::Extract(format!(
+            "rename {} → {}: {e}",
+            tmp.display(),
+            dest.display()
+        ))
+    })?;
+
+    Ok(())
+}
+
+fn remove_if_invalid(path: &Path, valid: bool) {
+    if path.exists() && !valid {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /// Returns `true` if the PDFium library is already cached on disk (no network
@@ -218,26 +275,24 @@ static RESOLVED_PATH: OnceLock<PathBuf> = OnceLock::new();
 ///
 /// Also returns `true` when `PDFIUM_LIB_PATH` points to an existing file.
 pub fn is_pdfium_cached() -> bool {
-    if let Ok(p) = std::env::var("PDFIUM_LIB_PATH") {
-        return PathBuf::from(p).exists();
+    if lib_path_override().is_some() {
+        return true;
     }
     if let Ok(info) = detect_platform() {
-        return pdfium_cache_dir().join(info.lib_name).exists();
+        let p = pdfium_cache_dir().join(info.lib_name);
+        return cache_file_valid_min(&p);
     }
     false
 }
 
 /// Returns the on-disk path to the PDFium library, or `None` if not cached.
 pub fn cached_pdfium_path() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("PDFIUM_LIB_PATH") {
-        let pb = PathBuf::from(p);
-        if pb.exists() {
-            return Some(pb);
-        }
+    if let Some(p) = lib_path_override() {
+        return Some(p);
     }
     if let Ok(info) = detect_platform() {
         let p = pdfium_cache_dir().join(info.lib_name);
-        if p.exists() {
+        if cache_file_valid_min(&p) {
             return Some(p);
         }
     }
@@ -247,37 +302,26 @@ pub fn cached_pdfium_path() -> Option<PathBuf> {
 /// Ensures the PDFium dynamic library is present in the local cache.
 ///
 /// - If `PDFIUM_LIB_PATH` is set (and the file exists), that path is used.
-/// - Otherwise, checks `pdfium_cache_dir()` for an existing library.
-/// - If absent, downloads the appropriate platform binary from GitHub
-///   and extracts it to the cache directory.
-///
-/// `on_progress` receives `(bytes_downloaded, total_size_option)` during
-/// the download.  Pass `None` to suppress progress callbacks.
+/// - Otherwise, checks `pdfium_cache_dir()` for a size-valid library.
+/// - If absent or truncated, downloads and atomically extracts.
 ///
 /// # Thread safety
 ///
-/// Safe to call from multiple threads simultaneously; the download happens
-/// only once per process lifetime.
+/// Safe to call from multiple threads / processes; extraction is guarded by
+/// an advisory file lock.
 pub fn ensure_pdfium_library(
     on_progress: Option<&dyn Fn(u64, Option<u64>)>,
 ) -> Result<PathBuf, PdfiumAutoError> {
-    // Fast path: already resolved in this process.
     if let Some(path) = RESOLVED_PATH.get() {
         return Ok(path.clone());
     }
 
     let path = resolve_or_download(on_progress)?;
-
-    // Best-effort cache in the OnceLock (ignore race; both will succeed).
     let _ = RESOLVED_PATH.set(path.clone());
-
     Ok(path)
 }
 
 /// Binds to PDFium, downloading it first if necessary.
-///
-/// `on_progress` receives `(bytes_downloaded, total_bytes_option)` during
-/// the initial download.
 pub fn bind_pdfium(
     on_progress: Option<&dyn Fn(u64, Option<u64>)>,
 ) -> Result<Pdfium, PdfiumAutoError> {
@@ -286,15 +330,11 @@ pub fn bind_pdfium(
 }
 
 /// Binds to PDFium without any progress output.
-///
-/// Downloads and caches on first call if required.
 pub fn bind_pdfium_silent() -> Result<Pdfium, PdfiumAutoError> {
     bind_pdfium(None)
 }
 
 /// Binds to a PDFium library at an explicit `path`.
-///
-/// Does not interact with the download / cache layer.
 pub fn bind_pdfium_from_path(path: &Path) -> Result<Pdfium, PdfiumAutoError> {
     Pdfium::bind_to_library(path)
         .map(Pdfium::new)
@@ -305,26 +345,6 @@ pub fn bind_pdfium_from_path(path: &Path) -> Result<Pdfium, PdfiumAutoError> {
 }
 
 // ── Bundled feature ───────────────────────────────────────────────────────────
-//
-// When compiled with `--features bundled` (and `PDFIUM_BUNDLE_LIB` set at
-// build time), the pdfium shared library bytes are embedded directly in the
-// binary via `include_bytes!`.  At first use the bytes are written to the
-// standard cache directory and loaded from there.  Subsequent runs reuse
-// the cached copy and skip the write.
-//
-// Build workflow:
-//
-//   # 1. Download the platform archive from bblanchon/pdfium-binaries and
-//   #    extract the shared library to a local path.
-//   curl -L https://github.com/bblanchon/pdfium-binaries/releases/download/\
-//        chromium%2F7690/pdfium-mac-arm64.tgz | tar xz
-//
-//   # 2. Build with the bundled feature enabled, pointing PDFIUM_BUNDLE_LIB
-//   #    at the extracted library.
-//   PDFIUM_BUNDLE_LIB=./lib/libpdfium.dylib \
-//     cargo build --release --features pdfium-auto/bundled
-//
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(feature = "bundled")]
 mod bundled_lib {
@@ -336,19 +356,15 @@ mod bundled_lib {
 /// Ensures the embedded PDFium library is extracted to the local cache and
 /// returns its on-disk path.
 ///
-/// This function is only available when the crate is compiled with the
-/// `bundled` feature.  The shared library bytes are embedded in the binary
-/// at compile time (via `PDFIUM_BUNDLE_LIB`); on first call they are written
-/// to `pdfium_cache_dir()` so that the OS can load them.  Subsequent calls
-/// simply return the cached path without any I/O.
-///
-/// # Errors
-///
-/// Returns [`PdfiumAutoError::CacheDir`] if the cache directory cannot be
-/// created, or [`PdfiumAutoError::Extract`] if writing the library fails.
+/// Honours `PDFIUM_LIB_PATH` (skip extract). Uses atomic publish + size check
+/// + advisory lock (SPEC-095).
 #[cfg(feature = "bundled")]
 pub fn ensure_pdfium_bundled() -> Result<PathBuf, PdfiumAutoError> {
-    // Fast path: already resolved in this process.
+    if let Some(path) = lib_path_override() {
+        let _ = RESOLVED_PATH.set(path.clone());
+        return Ok(path);
+    }
+
     if let Some(path) = RESOLVED_PATH.get() {
         return Ok(path.clone());
     }
@@ -356,29 +372,30 @@ pub fn ensure_pdfium_bundled() -> Result<PathBuf, PdfiumAutoError> {
     let info = detect_platform()?;
     let cache_dir = pdfium_cache_dir();
     let lib_path = cache_dir.join(info.lib_name);
+    let expected = bundled_lib::PDFIUM_BYTES.len() as u64;
 
-    // Write the embedded bytes only when the file is absent.
-    if !lib_path.exists() {
-        std::fs::create_dir_all(&cache_dir).map_err(PdfiumAutoError::CacheDir)?;
-        std::fs::write(&lib_path, bundled_lib::PDFIUM_BYTES).map_err(|e| {
-            PdfiumAutoError::Extract(format!(
-                "Failed to write bundled pdfium to {}: {}",
-                lib_path.display(),
-                e
-            ))
-        })?;
+    if cache_file_valid_exact(&lib_path, expected) {
+        let _ = RESOLVED_PATH.set(lib_path.clone());
+        return Ok(lib_path);
+    }
 
-        // On Unix, ensure the shared library is executable so the dynamic
-        // linker accepts it.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&lib_path)
-                .map_err(PdfiumAutoError::CacheDir)?
-                .permissions();
-            perms.set_mode(perms.mode() | 0o755);
-            std::fs::set_permissions(&lib_path, perms).map_err(PdfiumAutoError::CacheDir)?;
-        }
+    let _lock = acquire_extract_lock(&cache_dir)?;
+
+    // Re-check under lock (another process may have finished).
+    if cache_file_valid_exact(&lib_path, expected) {
+        let _ = RESOLVED_PATH.set(lib_path.clone());
+        return Ok(lib_path);
+    }
+
+    remove_if_invalid(&lib_path, false);
+    atomic_publish_bytes(&lib_path, bundled_lib::PDFIUM_BYTES)?;
+
+    if !cache_file_valid_exact(&lib_path, expected) {
+        return Err(PdfiumAutoError::Extract(format!(
+            "post-extract size mismatch at {}: got {:?}, expected {expected}",
+            lib_path.display(),
+            std::fs::metadata(&lib_path).map(|m| m.len()).ok()
+        )));
     }
 
     let _ = RESOLVED_PATH.set(lib_path.clone());
@@ -386,16 +403,16 @@ pub fn ensure_pdfium_bundled() -> Result<PathBuf, PdfiumAutoError> {
 }
 
 /// Binds to the PDFium library that was embedded at compile time.
-///
-/// Extracts the library to the local cache directory on first call (see
-/// [`ensure_pdfium_bundled`]).  No network access is required.
-///
-/// This function is only available when the crate is compiled with the
-/// `bundled` feature.
 #[cfg(feature = "bundled")]
 pub fn bind_bundled() -> Result<Pdfium, PdfiumAutoError> {
     let lib_path = ensure_pdfium_bundled()?;
     bind_pdfium_from_path(&lib_path)
+}
+
+/// Expected embedded library byte length (bundled feature only).
+#[cfg(feature = "bundled")]
+pub fn bundled_pdfium_len() -> usize {
+    bundled_lib::PDFIUM_BYTES.len()
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
@@ -403,21 +420,24 @@ pub fn bind_bundled() -> Result<Pdfium, PdfiumAutoError> {
 fn resolve_or_download(
     on_progress: Option<&dyn Fn(u64, Option<u64>)>,
 ) -> Result<PathBuf, PdfiumAutoError> {
-    // 1. Environment variable override.
-    if let Ok(env_path) = std::env::var("PDFIUM_LIB_PATH") {
-        let p = PathBuf::from(env_path);
-        if p.exists() {
-            return Ok(p);
-        }
-        // Fall through: env var set but file missing → still auto-download.
-        eprintln!(
-            "pdfium-auto: PDFIUM_LIB_PATH '{}' not found; downloading …",
-            p.display()
-        );
+    if let Some(p) = lib_path_override() {
+        return Ok(p);
     }
 
-    // Bail out early if the caller explicitly disabled network downloads.
-    // Useful in CI unit-test stages where pdfium is deliberately unavailable.
+    if let Ok(env_path) = std::env::var("PDFIUM_LIB_PATH") {
+        eprintln!("pdfium-auto: PDFIUM_LIB_PATH '{env_path}' not found or empty; downloading …");
+    }
+
+    let info = detect_platform()?;
+    let cache_dir = pdfium_cache_dir();
+    let lib_path = cache_dir.join(info.lib_name);
+
+    // Honour a size-valid cache before refusing network (CI uses NO_AUTO_DOWNLOAD
+    // with a warm cache or PDFIUM_LIB_PATH).
+    if cache_file_valid_min(&lib_path) {
+        return Ok(lib_path);
+    }
+
     if std::env::var("PDFIUM_NO_AUTO_DOWNLOAD").is_ok() {
         return Err(PdfiumAutoError::Download(
             "auto-download disabled (PDFIUM_NO_AUTO_DOWNLOAD is set); \
@@ -426,30 +446,32 @@ fn resolve_or_download(
         ));
     }
 
-    let info = detect_platform()?;
-    let cache_dir = pdfium_cache_dir();
-    let lib_path = cache_dir.join(info.lib_name);
+    let _lock = acquire_extract_lock(&cache_dir)?;
 
-    // 2. Already cached on disk.
-    if lib_path.exists() {
+    if cache_file_valid_min(&lib_path) {
         return Ok(lib_path);
     }
 
-    // 3. Download and extract.
+    remove_if_invalid(&lib_path, false);
+
     let url = format!(
-        "{}/chromium%2F{}/{}",
-        BASE_URL, PDFIUM_VERSION, info.archive_name
+        "{BASE_URL}/chromium%2F{PDFIUM_VERSION}/{}",
+        info.archive_name
     );
 
-    std::fs::create_dir_all(&cache_dir).map_err(PdfiumAutoError::CacheDir)?;
-
     let archive_bytes = download_bytes(&url, on_progress)?;
-    extract_library(&archive_bytes, info.lib_path_in_archive, &lib_path)?;
+    extract_library_atomic(&archive_bytes, info.lib_path_in_archive, &lib_path)?;
+
+    if !cache_file_valid_min(&lib_path) {
+        return Err(PdfiumAutoError::Extract(format!(
+            "post-extract library too short at {}",
+            lib_path.display()
+        )));
+    }
 
     Ok(lib_path)
 }
 
-/// Streams a URL into a `Vec<u8>`, calling `on_progress` every 64 KiB.
 fn download_bytes(
     url: &str,
     on_progress: Option<&dyn Fn(u64, Option<u64>)>,
@@ -477,7 +499,7 @@ fn download_bytes(
     let mut buf = Vec::with_capacity(capacity);
 
     let mut stream = response;
-    let mut chunk = vec![0u8; 64 * 1024]; // 64 KiB
+    let mut chunk = vec![0u8; 64 * 1024];
     let mut downloaded: u64 = 0;
 
     loop {
@@ -500,8 +522,8 @@ fn download_bytes(
     Ok(buf)
 }
 
-/// Extracts a single file from a gzipped tar archive into `dest_path`.
-fn extract_library(
+/// Extract library bytes from a gzipped tar into memory, then atomically publish.
+fn extract_library_atomic(
     archive_bytes: &[u8],
     lib_path_in_archive: &str,
     dest_path: &Path,
@@ -523,16 +545,16 @@ fn extract_library(
 
         let entry_str = entry_path.to_string_lossy();
         if entry_str == lib_path_in_archive {
+            let mut buf = Vec::new();
             entry
-                .unpack(dest_path)
-                .map_err(|e| PdfiumAutoError::Extract(format!("Unpack failed: {e}")))?;
-            return Ok(());
+                .read_to_end(&mut buf)
+                .map_err(|e| PdfiumAutoError::Extract(format!("read archive entry: {e}")))?;
+            return atomic_publish_bytes(dest_path, &buf);
         }
     }
 
     Err(PdfiumAutoError::Extract(format!(
-        "Library '{}' not found in archive",
-        lib_path_in_archive
+        "Library '{lib_path_in_archive}' not found in archive"
     )))
 }
 
@@ -541,16 +563,22 @@ fn extract_library(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    /// Serialise env-mutating tests (PDFIUM_AUTO_CACHE_DIR / PDFIUM_LIB_PATH).
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
 
     #[test]
     fn detect_platform_is_supported() {
-        // Verify the current platform is recognised.
         detect_platform().expect("current platform should be supported");
     }
 
     #[test]
     fn cache_dir_is_deterministic() {
-        // Guard against env pollution from a parallel test run.
+        let _g = env_lock();
         std::env::remove_var("PDFIUM_AUTO_CACHE_DIR");
         let d1 = pdfium_cache_dir();
         let d2 = pdfium_cache_dir();
@@ -567,9 +595,9 @@ mod tests {
 
     #[test]
     fn cache_dir_override_via_env() {
+        let _g = env_lock();
         std::env::set_var("PDFIUM_AUTO_CACHE_DIR", "/tmp/test_pdf2md_override");
         let d = pdfium_cache_dir();
-        // Always remove the override so parallel tests see a clean env.
         std::env::remove_var("PDFIUM_AUTO_CACHE_DIR");
         assert!(d.starts_with("/tmp/test_pdf2md_override"), "left: {d:?}");
         assert!(
@@ -584,5 +612,111 @@ mod tests {
         assert!(!info.archive_name.is_empty());
         assert!(!info.lib_path_in_archive.is_empty());
         assert!(!info.lib_name.is_empty());
+    }
+
+    #[test]
+    fn atomic_publish_survives_concurrent_writers() {
+        let dir = std::env::temp_dir().join(format!("pdfium-auto-atomic-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("libpdfium.so");
+        let payload = vec![0xABu8; 256 * 1024];
+
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let dest = dest.clone();
+                let payload = payload.clone();
+                std::thread::spawn(move || atomic_publish_bytes(&dest, &payload).unwrap())
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        assert_eq!(
+            std::fs::metadata(&dest).unwrap().len(),
+            payload.len() as u64
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn truncated_file_fails_exact_and_min_checks() {
+        let dir = std::env::temp_dir().join(format!("pdfium-auto-trunc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("libpdfium.so");
+        std::fs::write(&path, [0u8; 100]).unwrap();
+        assert!(!cache_file_valid_min(&path));
+        #[cfg(feature = "bundled")]
+        assert!(!cache_file_valid_exact(&path, 6_000_000));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(feature = "bundled")]
+    #[test]
+    fn truncated_cache_is_reextracted() {
+        // Full ensure()-based heal lives in tests/poison_heal_ensure.rs (cold process).
+        let _g = env_lock();
+        let base =
+            std::env::temp_dir().join(format!("pdfium-auto-poison-unit-{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        let lib = base.join("libpdfium.so");
+        std::fs::write(&lib, [0u8; 100]).unwrap();
+        assert!(!cache_file_valid_exact(
+            &lib,
+            bundled_lib::PDFIUM_BYTES.len() as u64
+        ));
+        remove_if_invalid(&lib, false);
+        atomic_publish_bytes(&lib, bundled_lib::PDFIUM_BYTES).unwrap();
+        assert!(cache_file_valid_exact(
+            &lib,
+            bundled_lib::PDFIUM_BYTES.len() as u64
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(feature = "bundled")]
+    #[test]
+    fn lib_path_skips_bundled_extract() {
+        // Full ensure()+cache untouched lives in tests/lib_path_skips_extract.rs.
+        let _g = env_lock();
+        let base =
+            std::env::temp_dir().join(format!("pdfium-auto-libpath-unit-{}", std::process::id()));
+        let fake_lib = base.join("pinned").join("libpdfium.dylib");
+        std::fs::create_dir_all(fake_lib.parent().unwrap()).unwrap();
+        std::fs::write(&fake_lib, b"PINNED").unwrap();
+        std::env::set_var("PDFIUM_LIB_PATH", &fake_lib);
+        assert_eq!(lib_path_override().unwrap(), fake_lib);
+        std::env::remove_var("PDFIUM_LIB_PATH");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(feature = "bundled")]
+    #[test]
+    fn atomic_extract_survives_concurrent_ensure() {
+        // True cold-cache concurrent race: tests/cold_cache_concurrent.rs.
+        // In-process: only exercise concurrent atomic_publish (RESOLVED_PATH-safe).
+        let dir =
+            std::env::temp_dir().join(format!("pdfium-auto-conc-unit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("libpdfium.so");
+        let payload = bundled_lib::PDFIUM_BYTES.to_vec();
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let dest = dest.clone();
+                let payload = payload.clone();
+                std::thread::spawn(move || atomic_publish_bytes(&dest, &payload).unwrap())
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(
+            std::fs::metadata(&dest).unwrap().len(),
+            bundled_lib::PDFIUM_BYTES.len() as u64
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

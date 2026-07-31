@@ -15,7 +15,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  PDFIUM_VERSION: "7690"
+  PDFIUM_VERSION: "7961"
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────────

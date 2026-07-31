@@ -23,7 +23,7 @@
 
 use std::path::{Path, PathBuf};
 
-const PDFIUM_VERSION: &str = "7690";
+const PDFIUM_VERSION: &str = "7961";
 const BASE_URL: &str = "https://github.com/bblanchon/pdfium-binaries/releases/download";
 
 // ── Platform metadata ────────────────────────────────────────────────────────

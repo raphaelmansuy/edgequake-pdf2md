@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.9] — 2026-07-31
+
+### Fixed
+
+- **SPEC-095 / `pdfium-auto` 0.3.1** — Bundled extract no longer writes directly to
+  the final cache path. Extraction uses temp-file + `rename`, an advisory file
+  lock, and exact-size integrity so concurrent cold starts and truncated
+  (`dlopen: file too short`) poison files self-heal instead of sticking forever.
+- **`get_pdfium` init race (SPEC-091 R-17)** — Concurrent first binds serialize via
+  `OnceCell::get_or_try_init` instead of check-then-act `set`.
+
+### Added
+
+- Public [`prime_pdfium`](crate::prime_pdfium) for process startup extract+bind.
+- Bundled mode honours `PDFIUM_LIB_PATH` before any cache write (skip extract).
+- Integration tests: cold concurrent ensure, poison heal via `ensure`, LIB_PATH
+  skip, `PDFIUM_NO_AUTO_DOWNLOAD` short-cache rejection.
+
+### Changed
+
+- PDFium binary pin **chromium/7690 → chromium/7961** (PDFium 152.0.7961.0).
+- Download-mode cache hit is checked before `PDFIUM_NO_AUTO_DOWNLOAD` refusal.
+
+---
+
 ## [0.9.8] — 2026-07-24
 
 ### Changed

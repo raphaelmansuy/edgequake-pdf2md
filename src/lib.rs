@@ -98,6 +98,7 @@ pub use pipeline::extract_regions::{
     extract_caption_regions, extract_caption_regions_from_bytes, extract_caption_regions_from_path,
     PageRegion, RegionKind,
 };
+pub use pipeline::render::prime_pdfium;
 pub use pipeline::visual::{
     extract_visual_regions, extract_visual_regions_from_bytes, extract_visual_regions_from_path,
     iou, page_has_struct_tree, refine_proposals, PdfiumStructTreeProposer, RegionSource,

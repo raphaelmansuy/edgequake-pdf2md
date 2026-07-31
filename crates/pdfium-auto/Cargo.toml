@@ -1,6 +1,6 @@
 [package]
 name         = "pdfium-auto"
-version      = "0.3.0"
+version      = "0.3.1"
 edition      = "2021"
 rust-version = "1.91"
 description  = "Auto-download and cache PDFium binaries — zero-friction setup for pdfium-render"
@@ -50,3 +50,18 @@ dirs         = "5"
 # Used by build.rs to extract the pdfium archive when bundling.
 flate2 = "1"
 tar    = "0"
+
+[[test]]
+name = "cold_cache_concurrent"
+required-features = ["bundled"]
+
+[[test]]
+name = "poison_heal_ensure"
+required-features = ["bundled"]
+
+[[test]]
+name = "lib_path_skips_extract"
+required-features = ["bundled"]
+
+[[test]]
+name = "download_min_size_rejects_short"
