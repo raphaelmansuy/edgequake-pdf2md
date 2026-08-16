@@ -29,6 +29,7 @@ pub mod extract_images;
 pub mod extract_regions;
 pub mod input;
 pub mod llm;
+pub mod page_geometry;
 pub mod postprocess;
 pub mod render;
 pub mod visual;

@@ -13,6 +13,7 @@ use tracing::{debug, info};
 
 use crate::error::Pdf2MdError;
 use crate::pipeline::render::get_pdfium;
+use crate::pipeline::visual::{aspect_ok, bbox_area, MAX_AREA_FRAC};
 
 /// Skip decorative bullets / 1px spacers.
 const MIN_FIGURE_EDGE_PX: u32 = 24;
@@ -78,6 +79,7 @@ fn extract_from_document(document: &PdfDocument<'_>) -> Result<Vec<EmbeddedImage
     let mut images = Vec::new();
     for (page_idx0, page) in document.pages().iter().enumerate() {
         let page_num = page_idx0 + 1;
+        let page_area = page.width().value.max(1.0) * page.height().value.max(1.0);
         let mut img_idx = 0usize;
         for object in page.objects().iter() {
             let Some(image_obj) = object.as_image_object() else {
@@ -110,6 +112,16 @@ fn extract_from_document(document: &PdfDocument<'_>) -> Result<Vec<EmbeddedImage
                 continue;
             }
             let bbox = object_bbox(&object);
+            let frac = bbox_area(bbox) / page_area.max(1.0);
+            if frac > MAX_AREA_FRAC || !aspect_ok(bbox) {
+                debug!(
+                    page_num,
+                    img_idx,
+                    frac,
+                    "Skipping ImageXObject (SPEC-128 full-page/aspect gate)"
+                );
+                continue;
+            }
             images.push(EmbeddedImage {
                 page_num,
                 index: img_idx,

@@ -99,11 +99,13 @@ pub use pipeline::extract_regions::{
     PageRegion, RegionKind,
 };
 pub use pipeline::render::prime_pdfium;
+pub use pipeline::page_geometry::{extract_page_media_boxes_from_bytes, PageMediaBox};
 pub use pipeline::visual::{
-    extract_visual_regions, extract_visual_regions_from_bytes, extract_visual_regions_from_path,
-    iou, page_has_struct_tree, refine_proposals, PdfiumStructTreeProposer, RegionSource,
-    StructTreeProposer, UnavailableStructTreeProposer, VisualRegion, DEDUP_IOU, MAX_AREA_FRAC,
-    MIN_AREA_FRAC,
+    cluster_paragraphs, derive_columns, extract_text_layout_from_bytes, extract_visual_regions,
+    extract_visual_regions_from_bytes, extract_visual_regions_from_path, iou, page_has_struct_tree,
+    refine_proposals, PdfiumStructTreeProposer, RegionSource, StructTreeProposer, TextLayoutRegion,
+    UnavailableStructTreeProposer, VisualRegion, DEDUP_IOU, MAX_AREA_FRAC, MAX_ASPECT,
+    MIN_AREA_FRAC, MIN_IMAGE_AREA_FRAC,
 };
 pub use progress::{ConversionProgressCallback, NoopProgressCallback, ProgressCallback};
 pub use stream::{convert_stream, convert_stream_from_bytes};

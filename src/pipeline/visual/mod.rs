@@ -9,16 +9,20 @@ mod object_cluster;
 mod precision;
 mod render_crop;
 mod struct_tree;
+mod text_blocks;
 mod types;
 
 pub use geometry::{
-    area_ok, cluster_bboxes, containment_ratio, iou, CONTAINMENT_SUPPRESS, DEDUP_IOU,
-    MAX_AREA_FRAC, MIN_AREA_FRAC,
+    area_ok, aspect_ok, bbox_area, cluster_bboxes, containment_ratio, image_area_ok, iou,
+    CONTAINMENT_SUPPRESS, DEDUP_IOU, MAX_AREA_FRAC, MAX_ASPECT, MIN_AREA_FRAC, MIN_IMAGE_AREA_FRAC,
 };
 pub use precision::refine_proposals;
 pub use struct_tree::{
     page_has_struct_tree, PdfiumStructTreeProposer, StructTreeProposer,
     UnavailableStructTreeProposer,
+};
+pub use text_blocks::{
+    cluster_paragraphs, derive_columns, extract_text_layout_from_bytes, TextLayoutRegion,
 };
 pub use types::{BBox, RegionKind, RegionProposal, RegionSource, VisualRegion};
 
@@ -160,6 +164,10 @@ fn extract_page_regions(
     });
 
     if proposals.is_empty() {
+        debug!(
+            page_num,
+            "WP-5: skip figure PNG writes (no Image/Form and empty L1 residual)"
+        );
         return Ok(Vec::new());
     }
 
@@ -317,6 +325,8 @@ mod tests {
         const _: () = {
             assert!(MAX_AREA_FRAC <= 0.55 + f32::EPSILON);
             assert!(MIN_AREA_FRAC >= 0.02 - f32::EPSILON);
+            assert!(MIN_IMAGE_AREA_FRAC >= 0.002 - f32::EPSILON);
+            assert!(MAX_ASPECT >= 8.0 - f32::EPSILON);
         };
     }
 

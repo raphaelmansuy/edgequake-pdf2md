@@ -31,7 +31,8 @@
 use pdfium_render::prelude::*;
 
 use super::geometry::{
-    area_ok, cluster_bboxes, containment_ratio, pad_bbox, CONTAINMENT_SUPPRESS, MAX_AREA_FRAC,
+    area_ok, cluster_bboxes, containment_ratio, image_area_ok, pad_bbox, CONTAINMENT_SUPPRESS,
+    MAX_AREA_FRAC,
 };
 use super::types::{BBox, RegionKind, RegionProposal, RegionSource};
 
@@ -225,11 +226,7 @@ fn region_area_ok(bbox: BBox, page_area: f32, has_image: bool) -> bool {
         return false;
     }
     if has_image {
-        // Keep all images meeting the minimum dimension gate.
-        // Logos and small ornaments are forwarded to the VLM Pass-1 filter,
-        // which classifies them semantically (logo/icon_logo → discard).
-        // Geometry cannot reliably distinguish a logo from a real small figure.
-        return w >= 24.0 && h >= 24.0;
+        return image_area_ok(bbox, page_area);
     }
     area_ok(bbox, page_area)
 }

@@ -4,8 +4,13 @@ use super::types::BBox;
 
 /// Minimum region area as a fraction of the page (skip tiny ornaments).
 pub const MIN_AREA_FRAC: f32 = 0.02;
+/// Image/Form placements may be smaller than path clusters (logos still reach VLM).
+/// Letter page ≈485k pt² — 40×30 pt sample ≈0.25%; keep floor below that.
+pub const MIN_IMAGE_AREA_FRAC: f32 = 0.002;
 /// Maximum region area as a fraction of the page (reject near-full-page dumps).
 pub const MAX_AREA_FRAC: f32 = 0.55;
+/// Reject needle-thin rules / banners (max(w,h)/min(w,h)).
+pub const MAX_ASPECT: f32 = 8.0;
 /// Padding around the union bbox in PDF points.
 pub const PAD_PTS: f32 = 6.0;
 /// IoU threshold to merge overlapping object quads into one cluster.
@@ -37,11 +42,29 @@ pub fn bbox_area(bb: BBox) -> f32 {
     w * h
 }
 
+pub fn aspect_ok(bbox: BBox) -> bool {
+    let w = (bbox.2 - bbox.0).abs().max(1.0);
+    let h = (bbox.3 - bbox.1).abs().max(1.0);
+    (w.max(h) / w.min(h)) <= MAX_ASPECT
+}
+
 pub fn area_ok(bbox: BBox, page_area: f32) -> bool {
     let w = (bbox.2 - bbox.0).abs();
     let h = (bbox.3 - bbox.1).abs();
     let frac = bbox_area(bbox) / page_area.max(1.0);
-    (MIN_AREA_FRAC..=MAX_AREA_FRAC).contains(&frac) && w >= 40.0 && h >= 40.0
+    (MIN_AREA_FRAC..=MAX_AREA_FRAC).contains(&frac) && w >= 40.0 && h >= 40.0 && aspect_ok(bbox)
+}
+
+/// Image/Form placement gate (SPEC-128): min area 0.8% of page + aspect + 24pt.
+pub fn image_area_ok(bbox: BBox, page_area: f32) -> bool {
+    let w = (bbox.2 - bbox.0).abs();
+    let h = (bbox.3 - bbox.1).abs();
+    let frac = bbox_area(bbox) / page_area.max(1.0);
+    w >= 24.0
+        && h >= 24.0
+        && frac >= MIN_IMAGE_AREA_FRAC
+        && frac <= MAX_AREA_FRAC
+        && aspect_ok(bbox)
 }
 
 pub fn pad_bbox(visual: BBox, page_w: f32, page_h: f32) -> BBox {
@@ -162,6 +185,15 @@ mod tests {
         assert!(!area_ok((0.0, 0.0, 90.0, 90.0), page));
         assert!(area_ok((10.0, 10.0, 50.0, 50.0), page));
         assert!(!area_ok((0.0, 0.0, 10.0, 10.0), page));
+    }
+
+    #[test]
+    fn aspect_gate_rejects_banner() {
+        let page = 612.0 * 792.0;
+        assert!(!aspect_ok((0.0, 0.0, 400.0, 20.0)));
+        assert!(aspect_ok((0.0, 0.0, 80.0, 80.0)));
+        assert!(!image_area_ok((0.0, 0.0, 20.0, 20.0), page));
+        assert!(image_area_ok((0.0, 0.0, 80.0, 80.0), page));
     }
 
     #[test]

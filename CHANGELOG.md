@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.11] — 2026-08-16
+
+### Added
+
+- **SPEC-128 page geometry + text layout** — `extract_page_media_boxes_from_bytes` /
+  `PageMediaBox` (MediaBox size + rotation); `extract_text_layout_from_bytes` /
+  `TextLayoutRegion` + paragraph cluster / column derive for overlay L0/L1 gates.
+  Public re-exports for EdgeQuake layout overlay persistence.
+
+### Changed
+
+- Visual region helpers expose `MAX_ASPECT` / `MIN_IMAGE_AREA_FRAC` (floor **0.002** so
+  40×30 pt logos pass on letter pages; extract path still rejects near-full-page dumps).
+
+---
+
 ## [0.9.10] — 2026-07-31
 
 ### Fixed

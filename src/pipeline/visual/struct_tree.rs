@@ -12,7 +12,7 @@ use std::ptr;
 use pdfium_render::prelude::*;
 use tracing::debug;
 
-use super::geometry::{area_ok, pad_bbox, MAX_AREA_FRAC};
+use super::geometry::{area_ok, image_area_ok, pad_bbox, MAX_AREA_FRAC};
 use super::types::{BBox, RegionKind, RegionProposal, RegionSource};
 
 /// PDFium object type for attribute arrays (Layout `/BBox`).
@@ -206,7 +206,7 @@ fn l0_area_ok(bbox: BBox, page_area: f32, has_image: bool) -> bool {
         return false;
     }
     if has_image {
-        return w >= 24.0 && h >= 24.0;
+        return image_area_ok(bbox, page_area);
     }
     area_ok(bbox, page_area)
 }
